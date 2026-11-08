@@ -250,12 +250,8 @@ impl fmt::Display for PgArray {
         }
         if self.dims.iter().any(|dim| dim.lower() != 1) {
             for dim in &self.dims {
-                write!(
-                    f,
-                    "[{}:{}]",
-                    dim.lower(),
-                    i64::from(dim.lower()) + i64::from(dim.length()) - 1
-                )?;
+                let upper = i64::from(dim.lower()) + i64::from(dim.length()) - 1;
+                write!(f, "[{}:{upper}]", dim.lower())?;
             }
             f.write_str("=")?;
         }
@@ -446,6 +442,35 @@ mod tests {
         .unwrap();
         assert_eq!(left, right);
         assert_eq!(hash(&left), hash(&right));
+        // Equal elements, element counts and dimension counts order by the lengths.
+        let six: Vec<_> = (1..=6).map(|value| Some(PgValue::Integer(value))).collect();
+        let two_by_three = PgArray::with_dims(vec![dim(1, 2), dim(1, 3)], six.clone()).unwrap();
+        let three_by_two = PgArray::with_dims(vec![dim(1, 3), dim(1, 2)], six).unwrap();
+        assert!(two_by_three < three_by_two);
+    }
+
+    /// An array is a `PgValue` of its own type, after every scalar type, compared, hashed and
+    /// printed as the array, read by no scalar cast, and printed by its output function unless
+    /// a date or a timestamp element leaves the spelling to `DateStyle`.
+    #[test]
+    fn an_array_value_is_a_type_of_its_own() {
+        let elements = vec![Some(PgValue::Integer(1)), None];
+        let array = PgValue::Array(PgArray::new(elements.clone()));
+        assert!(array > PgValue::Integer(i64::MAX));
+        assert_eq!(array, PgValue::Array(PgArray::new(elements.clone())));
+        assert_eq!(hash(&array), hash(&PgValue::Array(PgArray::new(elements))));
+        assert_eq!(array.to_string(), "{1,NULL}");
+        assert_eq!(
+            array.output().map(|output| output.to_string()).as_deref(),
+            Some("{1,NULL}")
+        );
+        let day = crate::datetime::PgDate::from_ymd(2026, 1, 1).unwrap();
+        let dated = PgValue::Array(PgArray::new(vec![Some(PgValue::Date(day))]));
+        assert!(dated.output().is_none());
+        assert_eq!(
+            array.into_cast_value(crate::integer::IntegerType::Integer),
+            Err(crate::cast::CastError::Unsupported)
+        );
     }
 
     /// A fixed seed's [`core::hash::BuildHasher`], for the no_std hash comparison.
