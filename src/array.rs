@@ -37,7 +37,8 @@ pub struct ArrayDim {
 }
 
 impl ArrayDim {
-    /// The dimension of `length` from `lower`, or `None` when its upper bound overflows `i32`.
+    /// The dimension of `length` from `lower`, or `None` when `lower + length` overflows `i32`,
+    /// as `ArrayCheckBounds` refuses it, so the upper bound stays below `i32::MAX`.
     ///
     /// ```
     /// use sql_values::ArrayDim;
@@ -45,11 +46,12 @@ impl ArrayDim {
     /// let dim = ArrayDim::new(-1, 3).unwrap();
     /// assert_eq!(dim.lower(), -1);
     /// assert_eq!(dim.length(), 3);
-    /// assert!(ArrayDim::new(i32::MAX, 2).is_none());
+    /// assert!(ArrayDim::new(i32::MAX - 1, 1).is_some());
+    /// assert!(ArrayDim::new(i32::MAX, 1).is_none());
     /// ```
     #[must_use]
     pub fn new(lower: i32, length: u32) -> Option<Self> {
-        i32::try_from(i64::from(lower) + i64::from(length) - 1)
+        i32::try_from(i64::from(lower) + i64::from(length))
             .ok()
             .map(|_| Self { lower, length })
     }
@@ -324,15 +326,17 @@ mod tests {
         ArrayDim::new(lower, length).expect("a bound")
     }
 
+    /// `ArrayCheckBounds` refuses a dimension whose `lower + length` overflows `i32`, as
+    /// `'[2147483647:2147483647]={1}'::int[]` and `'[2147483645:2147483646]={1,2}'::int[] || 3`
+    /// show on PostgreSQL 18.6.
     #[test]
-    fn bounds_refuse_the_overflowing_upper_bound() {
+    fn bounds_refuse_an_overflowing_lower_plus_length() {
         let dim = ArrayDim::new(-1, 3).unwrap();
         assert_eq!((dim.lower(), dim.length()), (-1, 3));
-        assert!(ArrayDim::new(i32::MAX, 1).is_some());
-        assert!(ArrayDim::new(i32::MAX, 2).is_none());
-        assert!(ArrayDim::new(i32::MIN, 1).is_some());
+        assert!(ArrayDim::new(i32::MAX - 1, 1).is_some());
+        assert!(ArrayDim::new(i32::MAX, 1).is_none());
+        assert!(ArrayDim::new(i32::MAX - 2, 3).is_none());
         assert!(ArrayDim::new(i32::MIN, 2).is_some());
-        assert!(ArrayDim::new(i32::MIN, 0).is_none());
     }
 
     #[test]
