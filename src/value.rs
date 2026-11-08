@@ -10,14 +10,15 @@ use core::{
 };
 
 use crate::{
+    array::PgArray,
     cast::{CastError, CastValue},
     datetime::{PgDate, PgTimestamp},
     integer::IntegerType,
     numeric::PgNumeric,
 };
 
-/// A known `boolean`, integer, `numeric`, `text`, `date` or `timestamp` value, equal, ordered and
-/// hashed as PostgreSQL's comparison operators compare it.
+/// A known `boolean`, integer, `numeric`, `text`, `date`, `timestamp` or array value, equal,
+/// ordered and hashed as PostgreSQL's comparison operators compare it.
 ///
 /// An integer of every width and a `numeric` compare by value, as `int48eq`, or `numeric_eq` after
 /// `int8_numeric`, compares them, so `4`, `4::bigint` and `4.00` are one value. A `date` compares
@@ -63,6 +64,8 @@ pub enum PgValue {
     Date(PgDate),
     /// A `timestamp`.
     Timestamp(PgTimestamp),
+    /// An array of values over its dimensions, in row-major order.
+    Array(PgArray),
 }
 
 impl PgValue {
@@ -73,6 +76,7 @@ impl PgValue {
             Self::Integer(_) | Self::Numeric(_) => 1,
             Self::Text(_) => 2,
             Self::Date(_) | Self::Timestamp(_) => 3,
+            Self::Array(_) => 4,
         }
     }
 
@@ -102,6 +106,7 @@ impl PgValue {
             Self::Text(text) => CastValue::Text(text),
             Self::Date(date) => CastValue::Date(date),
             Self::Timestamp(at) => CastValue::Timestamp(at),
+            Self::Array(_) => return Err(CastError::Unsupported),
         })
     }
 
@@ -153,8 +158,8 @@ impl PgValue {
         }
     }
 
-    /// The type's output function, as `concat` and `||` call it, or `None` for a `date` or a
-    /// `timestamp`, whose spelling `DateStyle` decides.
+    /// The type's output function, as `concat` and `||` call it, or `None` for a `date`, a
+    /// `timestamp` or an array holding either, whose spelling `DateStyle` decides.
     ///
     /// ```
     /// use sql_values::{PgDate, PgValue};
@@ -165,7 +170,14 @@ impl PgValue {
     /// ```
     #[must_use]
     pub fn output(&self) -> Option<impl fmt::Display + '_> {
-        (!matches!(self, Self::Date(_) | Self::Timestamp(_))).then_some(self)
+        match self {
+            Self::Array(array) => (array
+                .elements()
+                .iter()
+                .all(|value| !matches!(value, Some(Self::Date(_) | Self::Timestamp(_)))))
+            .then_some(self),
+            _ => (!matches!(self, Self::Date(_) | Self::Timestamp(_))).then_some(self),
+        }
     }
 }
 
@@ -215,6 +227,7 @@ impl Ord for PgValue {
             (Self::Date(left), Self::Timestamp(right)) => left.cmp_timestamp(*right),
             (Self::Timestamp(left), Self::Date(right)) => right.cmp_timestamp(*left).reverse(),
             (Self::Timestamp(left), Self::Timestamp(right)) => left.cmp(right),
+            (Self::Array(left), Self::Array(right)) => left.cmp(right),
             (left, right) => left.family().cmp(&right.family()),
         }
     }
@@ -234,6 +247,7 @@ impl Hash for PgValue {
                 Err(_) => date.hash(state),
             },
             Self::Timestamp(at) => at.hash(state),
+            Self::Array(array) => array.hash(state),
         }
     }
 }
@@ -247,6 +261,7 @@ impl fmt::Display for PgValue {
             Self::Text(text) => f.write_str(text),
             Self::Date(date) => write!(f, "{date}"),
             Self::Timestamp(at) => write!(f, "{at}"),
+            Self::Array(array) => write!(f, "{array}"),
         }
     }
 }

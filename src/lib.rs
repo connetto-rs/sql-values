@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod array;
 mod bpchar;
 mod cast;
 mod datetime;
@@ -13,6 +14,7 @@ mod numeric;
 mod value;
 mod zone;
 
+pub use array::{ArrayDim, PgArray};
 pub use bpchar::PgBpchar;
 pub use cast::{
     CastError, CastTarget, CastValue, CharLength, Literal, PgType, cast_literal, cast_value,
