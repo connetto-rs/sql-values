@@ -861,6 +861,7 @@ mod tests {
             ("{\"a\"", CastError::MalformedArrayLiteral),
             ("[99999999999999999999:1]=", CastError::ArrayBoundOutOfRange),
             ("[--:1]=", CastError::MalformedArrayLiteral),
+            ("[1", CastError::MalformedArrayLiteral),
             ("{abc}", CastError::InvalidInputSyntax(PgType::Integer)),
             ("{40000}", CastError::ValueOutOfRange(PgType::Smallint)),
         ];
