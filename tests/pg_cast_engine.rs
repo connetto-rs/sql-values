@@ -5,6 +5,8 @@
 mod containers;
 #[path = "support/exit_slot.rs"]
 mod exit_slot;
+#[path = "support/pg18.rs"]
+mod pg18;
 #[path = "support/postgres.rs"]
 mod postgres;
 
@@ -16,19 +18,13 @@ use std::{
 use diesel::{
     dsl::sql,
     prelude::*,
-    result::Error as DieselError,
     sql_types::{Bool, Integer, Text},
 };
+use pg18::{connect, pg_order, pg_text, quoted};
 use sql_values::{
     CastError, CastTarget, CastValue, CharLength, IntegerType, Literal, NumericTypmod, PgBpchar,
     PgNumeric, PgType, PgValue, cast_literal, cast_value, number_constant,
 };
-
-static PG18: postgres::Slot = exit_slot::ExitSlot::new();
-
-const PG18_TAG: &str = "18.6";
-
-define_sql_function!(fn set_config(setting: Text, value: Text, is_local: Bool) -> Text);
 
 /// Every target with the SQL that names it.
 fn targets() -> Vec<(&'static str, CastTarget)> {
@@ -360,81 +356,6 @@ const NUMBERS: &[&str] = &[
     "abc",
     "--1",
 ];
-
-/// The crate's error for a message PostgreSQL raises, which names the input in quotes.
-fn pg_error(message: &str) -> CastError {
-    let stem = match message.strip_prefix("value \"") {
-        Some(rest) => {
-            let (_, type_name) = rest
-                .split_once("\" is out of range for type ")
-                .unwrap_or_else(|| panic!("PostgreSQL raised {message:?}"));
-            format!("value is out of range for type {type_name}")
-        }
-        None => message
-            .split_once(": \"")
-            .map_or(message, |(stem, _)| stem)
-            .to_owned(),
-    };
-    let types = [
-        PgType::Boolean,
-        PgType::Smallint,
-        PgType::Integer,
-        PgType::Bigint,
-        PgType::Numeric,
-        PgType::Text,
-        PgType::Varchar,
-        PgType::Bpchar,
-        PgType::Date,
-        PgType::Timestamp,
-        PgType::TimestampTz,
-    ];
-    let mut errors = vec![
-        CastError::NumericFieldOverflow,
-        CastError::NumericFormatOverflow,
-        CastError::DateTimeFieldOutOfRange,
-        CastError::DateOutOfRange,
-        CastError::TimestampOutOfRange,
-        CastError::DateOutOfRangeForTimestamp,
-        CastError::TimeZoneDisplacementOutOfRange,
-    ];
-    for pg_type in types {
-        errors.push(CastError::InvalidInputSyntax(pg_type));
-        errors.push(CastError::ValueOutOfRange(pg_type));
-        errors.push(CastError::OutOfRange(pg_type));
-        errors.push(CastError::CannotConvertNaN(pg_type));
-        errors.push(CastError::CannotConvertInfinity(pg_type));
-        for from in types {
-            errors.push(CastError::CannotCast { from, to: pg_type });
-        }
-    }
-    errors
-        .into_iter()
-        .find(|error| error.to_string() == stem)
-        .unwrap_or_else(|| panic!("PostgreSQL raised {message:?}"))
-}
-
-/// The text `expression` prints through its type's output function, or the error it raises.
-fn pg_text(conn: &mut PgConnection, expression: &str) -> Result<String, CastError> {
-    // Raw SQL with the literal inline, since a bound parameter is typed `text` and casts as
-    // `text` does, never as the unknown literal under test.
-    match diesel::select(sql::<Text>(&format!("format('%s', {expression})"))).get_result(conn) {
-        Ok(text) => Ok(text),
-        Err(DieselError::DatabaseError(_, info)) => Err(pg_error(info.message())),
-        Err(other) => panic!("{expression}: {other}"),
-    }
-}
-
-fn connect() -> PgConnection {
-    let mut conn = postgres::connect(&PG18, PG18_TAG);
-    let _: String = diesel::select(set_config("TimeZone", "UTC", false))
-        .get_result(&mut conn)
-        .expect("set TimeZone");
-    conn
-}
-
-fn quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
 
 /// Every literal under every target, skipping the casts the crate declines.
 #[test]
@@ -896,22 +817,6 @@ const COMPARED: &[(&str, &str)] = &[
     ("infinity", "timestamp"),
     ("-infinity", "timestamp"),
 ];
-
-/// The order PostgreSQL's `<` and `=` give `left` and `right`, or `None` when it has no operator
-/// between their types.
-fn pg_order(conn: &mut PgConnection, left: &str, right: &str) -> Option<Ordering> {
-    let expression =
-        format!("CASE WHEN {left} < {right} THEN -1 WHEN {left} = {right} THEN 0 ELSE 1 END");
-    match diesel::select(sql::<Integer>(&expression)).get_result::<i32>(conn) {
-        Ok(order) => Some(order.cmp(&0)),
-        Err(DieselError::DatabaseError(_, info))
-            if info.message().starts_with("operator does not exist") =>
-        {
-            None
-        }
-        Err(other) => panic!("{expression}: {other}"),
-    }
-}
 
 /// Every pair of values orders as PostgreSQL's `<` and `=` order it where PostgreSQL has an
 /// operator between their types, text under the `C` collation, and is unequal where it has none.

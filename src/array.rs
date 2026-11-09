@@ -24,7 +24,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use crate::value::PgValue;
+use crate::{cast::is_pg_space, value::PgValue};
 
 /// The most array dimensions PostgreSQL allows, `MAXDIM`.
 const MAX_DIMS: usize = 6;
@@ -197,42 +197,32 @@ impl PartialOrd for PgArray {
 /// bounds.
 impl Ord for PgArray {
     fn cmp(&self, other: &Self) -> Ordering {
-        for (left, right) in self.elements.iter().zip(other.elements.iter()) {
-            match (left, right) {
-                (None, None) => {}
-                // `NULL` sorts after every value.
-                (Some(_), None) => return Ordering::Less,
-                (None, Some(_)) => return Ordering::Greater,
-                (Some(left), Some(right)) => {
-                    let order = left.cmp(right);
-                    if order != Ordering::Equal {
-                        return order;
-                    }
-                }
-            }
-        }
-        match self.elements.len().cmp(&other.elements.len()) {
-            Ordering::Equal => {}
-            order => return order,
-        }
-        match self.dims.len().cmp(&other.dims.len()) {
-            Ordering::Equal => {}
-            order => return order,
-        }
-        for (left, right) in self.dims.iter().zip(other.dims.iter()) {
-            let order = left.length().cmp(&right.length());
-            if order != Ordering::Equal {
-                return order;
-            }
-        }
-        for (left, right) in self.dims.iter().zip(other.dims.iter()) {
-            let order = left.lower().cmp(&right.lower());
-            if order != Ordering::Equal {
-                return order;
-            }
-        }
-        Ordering::Equal
+        // An element's key is its absence, then its value, so two `NULL`s are equal and a
+        // `NULL` sorts after every value. Each sequence compares lexicographically, so the
+        // element order falls back to the element count.
+        self.elements
+            .iter()
+            .map(element_key)
+            .cmp(other.elements.iter().map(element_key))
+            .then_with(|| self.dims.len().cmp(&other.dims.len()))
+            .then_with(|| {
+                self.dims
+                    .iter()
+                    .map(|dim| dim.length())
+                    .cmp(other.dims.iter().map(|dim| dim.length()))
+            })
+            .then_with(|| {
+                self.dims
+                    .iter()
+                    .map(|dim| dim.lower())
+                    .cmp(other.dims.iter().map(|dim| dim.lower()))
+            })
     }
+}
+
+/// The element's key in the order, its absence, then its value.
+fn element_key(element: &Option<PgValue>) -> (bool, &Option<PgValue>) {
+    (element.is_none(), element)
 }
 
 impl Hash for PgArray {
@@ -290,7 +280,7 @@ fn write_element(f: &mut fmt::Formatter<'_>, value: &Option<PgValue>) -> fmt::Re
         None => f.write_str("NULL"),
         Some(value) => {
             let text = value.to_string();
-            if text.is_empty() || text.eq_ignore_ascii_case("NULL") || text.chars().any(quotes) {
+            if text.is_empty() || text.eq_ignore_ascii_case("NULL") || text.bytes().any(quotes) {
                 fmt::Write::write_char(f, '"')?;
                 for c in text.chars() {
                     if matches!(c, '"' | '\\') {
@@ -306,12 +296,9 @@ fn write_element(f: &mut fmt::Formatter<'_>, value: &Option<PgValue>) -> fmt::Re
     }
 }
 
-/// Whether the character forces `array_out` to quote the element.
-const fn quotes(c: char) -> bool {
-    matches!(
-        c,
-        '"' | '\\' | '{' | '}' | ',' | ' ' | '\t' | '\n' | '\r' | '\u{0B}' | '\u{0C}'
-    )
+/// Whether the byte forces `array_out` to quote the element.
+fn quotes(byte: u8) -> bool {
+    matches!(byte, b'"' | b'\\' | b'{' | b'}' | b',') || is_pg_space(byte)
 }
 
 #[cfg(test)]

@@ -8,6 +8,8 @@
 mod containers;
 #[path = "support/exit_slot.rs"]
 mod exit_slot;
+#[path = "support/pg18.rs"]
+mod pg18;
 #[path = "support/postgres.rs"]
 mod postgres;
 
@@ -16,128 +18,49 @@ use std::{
     hash::{BuildHasher, RandomState},
 };
 
-use diesel::{
-    dsl::sql,
-    prelude::*,
-    result::Error as DieselError,
-    sql_types::{Bool, Integer, Text},
-};
-use sql_values::{
-    ArrayDim, CastError, InputContext, PgArray, PgDate, PgTimestamp, PgType, PgValue,
-};
-
-static PG18: postgres::Slot = exit_slot::ExitSlot::new();
-
-const PG18_TAG: &str = "18.6";
-
-define_sql_function!(fn set_config(setting: Text, value: Text, is_local: Bool) -> Text);
-
-/// A PostgreSQL 18.6 session under `TimeZone` `UTC`.
-fn connect() -> PgConnection {
-    let mut conn = postgres::connect(&PG18, PG18_TAG);
-    let _: String = diesel::select(set_config("TimeZone", "UTC", false))
-        .get_result(&mut conn)
-        .expect("set TimeZone");
-    conn
-}
-
-/// `text` quoted as an SQL string literal.
-fn quoted(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
-
-/// The crate's error for a message PostgreSQL raises, which names the input in quotes.
-fn pg_error(message: &str) -> CastError {
-    let stem = match message.strip_prefix("value \"") {
-        Some(rest) => {
-            let (_, type_name) = rest
-                .split_once("\" is out of range for type ")
-                .unwrap_or_else(|| panic!("PostgreSQL raised {message:?}"));
-            format!("value is out of range for type {type_name}")
-        }
-        None => message
-            .split_once(": \"")
-            .map_or(message, |(stem, _)| stem)
-            .to_owned(),
-    };
-    let types = [
-        PgType::Boolean,
-        PgType::Smallint,
-        PgType::Integer,
-        PgType::Bigint,
-        PgType::Numeric,
-        PgType::Text,
-        PgType::Varchar,
-        PgType::Bpchar,
-        PgType::Date,
-        PgType::Timestamp,
-        PgType::TimestampTz,
-    ];
-    let mut errors = vec![
-        CastError::NumericFieldOverflow,
-        CastError::NumericFormatOverflow,
-        CastError::DateTimeFieldOutOfRange,
-        CastError::DateOutOfRange,
-        CastError::TimestampOutOfRange,
-        CastError::DateOutOfRangeForTimestamp,
-        CastError::TimeZoneDisplacementOutOfRange,
-    ];
-    for pg_type in types {
-        errors.push(CastError::InvalidInputSyntax(pg_type));
-        errors.push(CastError::ValueOutOfRange(pg_type));
-        errors.push(CastError::OutOfRange(pg_type));
-        errors.push(CastError::CannotConvertNaN(pg_type));
-        errors.push(CastError::CannotConvertInfinity(pg_type));
-        for from in types {
-            errors.push(CastError::CannotCast { from, to: pg_type });
-        }
-    }
-    errors
-        .into_iter()
-        .find(|error| error.to_string() == stem)
-        .unwrap_or_else(|| panic!("PostgreSQL raised {message:?}"))
-}
-
-/// The text `expression` prints through its type's output function, or the error it raises.
-fn pg_text(conn: &mut PgConnection, expression: &str) -> Result<String, CastError> {
-    // Raw SQL with the literal inline, since a bound parameter is typed `text` and casts as
-    // `text` does, never as the unknown literal under test.
-    match diesel::select(sql::<Text>(&format!("format('%s', {expression})"))).get_result(conn) {
-        Ok(text) => Ok(text),
-        Err(DieselError::DatabaseError(_, info)) => Err(pg_error(info.message())),
-        Err(other) => panic!("{expression}: {other}"),
-    }
-}
-
-/// The order PostgreSQL's `<` and `=` give `left` and `right`.
-fn pg_order(conn: &mut PgConnection, left: &str, right: &str) -> Ordering {
-    let expression =
-        format!("CASE WHEN {left} < {right} THEN -1 WHEN {left} = {right} THEN 0 ELSE 1 END");
-    let order: i32 = diesel::select(sql::<Integer>(&expression))
-        .get_result(conn)
-        .unwrap_or_else(|e| panic!("{expression}: {e}"));
-    order.cmp(&0)
-}
+use diesel::PgConnection;
+use pg18::{connect, pg_order, pg_text, quoted};
+use sql_values::{ArrayDim, CastError, InputContext, PgArray, PgDate, PgTimestamp, PgValue};
 
 /// One dimension of `lower` and `length`.
 fn dim(lower: i32, length: u32) -> ArrayDim {
     ArrayDim::new(lower, length).expect("a bound")
 }
 
+/// The `integer` value for each of `values`, `None` kept.
+fn ints(values: &[Option<i64>]) -> Vec<Option<PgValue>> {
+    values
+        .iter()
+        .map(|value| value.map(PgValue::Integer))
+        .collect()
+}
+
+/// The `text` value for each of `values`, `None` kept.
+fn texts(values: &[Option<&str>]) -> Vec<Option<PgValue>> {
+    values
+        .iter()
+        .map(|value| value.map(|text| PgValue::Text(text.into())))
+        .collect()
+}
+
+/// The mismatch, recorded in `mismatches`, when the crate's `got` for `expression` differs from
+/// PostgreSQL's answer.
+fn check(
+    conn: &mut PgConnection,
+    mismatches: &mut Vec<String>,
+    expression: &str,
+    got: Result<String, CastError>,
+) {
+    let expected = pg_text(conn, expression);
+    if got != expected {
+        mismatches.push(format!(
+            "{expression}: crate {got:?}, PostgreSQL {expected:?}"
+        ));
+    }
+}
+
 /// The shape `expression` holds on PostgreSQL 18.6 beside the crate's array for it.
 fn shapes() -> Vec<(&'static str, PgArray)> {
-    let ints = |values: &[Option<i64>]| {
-        values
-            .iter()
-            .map(|value| value.map(PgValue::Integer))
-            .collect()
-    };
-    let texts = |values: &[Option<&str>]| {
-        values
-            .iter()
-            .map(|value| value.map(|text| PgValue::Text(text.into())))
-            .collect()
-    };
     let day = PgDate::parse("2026-01-01", InputContext::new()).expect("a date");
     let min_day = PgDate::parse("4714-11-24 BC", InputContext::new()).expect("a date");
     let instant =
@@ -258,31 +181,18 @@ fn pg18_prints_every_array_shape() {
     let mut conn = connect();
     let mut mismatches = Vec::new();
     for (expression, array) in shapes() {
-        let got = Ok(array.to_string());
-        let expected = pg_text(&mut conn, expression);
-        if got != expected {
-            mismatches.push(format!(
-                "{expression}: crate {got:?}, PostgreSQL {expected:?}"
-            ));
-        }
+        check(
+            &mut conn,
+            &mut mismatches,
+            expression,
+            Ok(array.to_string()),
+        );
     }
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
 /// The array shapes and their crate values, text under the `C` collation.
 fn ordered() -> Vec<(&'static str, String, PgArray)> {
-    let ints = |values: &[Option<i64>]| -> Vec<Option<PgValue>> {
-        values
-            .iter()
-            .map(|value| value.map(PgValue::Integer))
-            .collect()
-    };
-    let texts = |values: &[Option<&str>]| -> Vec<Option<PgValue>> {
-        values
-            .iter()
-            .map(|value| value.map(|text| PgValue::Text(text.into())))
-            .collect()
-    };
     let entries = [
         ("int[]", "{}", PgArray::new(Vec::new())),
         ("int[]", "{{}}", PgArray::new(Vec::new())),
@@ -503,7 +413,7 @@ fn pg18_orders_and_equates_every_array_pair() {
                 continue;
             }
             let got = left.cmp(right);
-            let expected = pg_order(&mut conn, left_sql, right_sql);
+            let expected = pg_order(&mut conn, left_sql, right_sql).unwrap();
             if got != expected {
                 mismatches.push(format!(
                     "{left_sql} vs {right_sql}: crate {got:?}, PostgreSQL {expected:?}",
