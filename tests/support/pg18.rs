@@ -69,6 +69,12 @@ pub fn pg_error(message: &str) -> CastError {
         PgType::TimestampTz,
     ];
     let mut errors = vec![
+        CastError::MalformedArrayLiteral,
+        CastError::ArrayDimensionsExceeded,
+        CastError::UpperBoundLessThanLower,
+        CastError::ArrayUpperBoundTooLarge(i32::MAX),
+        CastError::ArraySizeExceeded,
+        CastError::ArrayBoundOutOfRange,
         CastError::NumericFieldOverflow,
         CastError::NumericFormatOverflow,
         CastError::DateTimeFieldOutOfRange,

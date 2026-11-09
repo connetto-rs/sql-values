@@ -251,6 +251,24 @@ pub enum CastError {
         /// The target's type.
         to: PgType,
     },
+    /// An array literal `array_in` cannot read.
+    #[error("malformed array literal")]
+    MalformedArrayLiteral,
+    /// An array of more than 6 dimensions.
+    #[error("number of array dimensions exceeds the maximum allowed (6)")]
+    ArrayDimensionsExceeded,
+    /// A specified dimension whose upper bound is less than its lower bound.
+    #[error("upper bound cannot be less than lower bound")]
+    UpperBoundLessThanLower,
+    /// A specified dimension whose upper bound is `2147483647`.
+    #[error("array upper bound is too large: {0}")]
+    ArrayUpperBoundTooLarge(i32),
+    /// An array whose size overflows `int32` arithmetic.
+    #[error("array size exceeds the maximum allowed (134217727)")]
+    ArraySizeExceeded,
+    /// A dimension bound `i32` cannot hold.
+    #[error("array bound is out of integer range")]
+    ArrayBoundOutOfRange,
     /// A literal or cast this crate does not model. A date or timestamp is read only in the
     /// spellings [`PgDate::parse`] and [`PgTimestamp::parse`] read, and a `timestamptz` only
     /// with its offset, since without one the session's `TimeZone` decides the instant. For the
