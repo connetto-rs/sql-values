@@ -59,6 +59,7 @@ jobs:
       - run: cd fuzz && cargo +nightly fuzz run fuzz_time -- -dict=sql_scalars.dict -max_len=100 -runs=100
       - run: cd fuzz && cargo +nightly fuzz run fuzz_bool -- -dict=sql_scalars.dict -max_len=100 -runs=100
       - run: cd fuzz && cargo +nightly fuzz run fuzz_pg_bytea_hex -- -dict=sql_scalars.dict -max_len=100 -runs=100
+      - run: cd fuzz && cargo +nightly fuzz run fuzz_bytea -- -dict=sql_scalars.dict -max_len=100 -runs=100
       - run: cd fuzz && cargo +nightly fuzz run fuzz_i64 -- -dict=sql_scalars.dict -max_len=100 -runs=100
       - run: cd fuzz && cargo +nightly fuzz run fuzz_f64 -- -dict=sql_scalars.dict -max_len=100 -runs=100
       - run: cd fuzz && cargo +nightly fuzz run fuzz_decimal -- -dict=sql_scalars.dict -max_len=100 -runs=100
