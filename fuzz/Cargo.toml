@@ -51,6 +51,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_bytea"
+path = "fuzz_targets/fuzz_bytea.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_pg_bytea_hex"
 path = "fuzz_targets/fuzz_pg_bytea_hex.rs"
 test = false

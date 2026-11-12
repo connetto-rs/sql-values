@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod bpchar;
+mod bytea;
 mod cast;
 mod datetime;
 mod float;
@@ -14,6 +15,7 @@ mod value;
 mod zone;
 
 pub use bpchar::PgBpchar;
+pub use bytea::{ByteaError, PgBytea};
 pub use cast::{
     CastError, CastTarget, CastValue, CharLength, Literal, PgType, cast_literal, cast_value,
     number_constant,
