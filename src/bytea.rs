@@ -36,6 +36,8 @@ pub enum ByteaError {
 /// assert_eq!(bytea(r"\x de AD "), bytea(r"\336\255"));
 /// assert_eq!(bytea(r"a\\b").as_bytes(), b"a\\b");
 /// assert_eq!(bytea("hi").to_string(), r"\x6869");
+/// assert_eq!(PgBytea::from(b"hi".to_vec()), bytea(r"\x6869"));
+/// assert_eq!(bytea(r"\150\151").into_bytes(), b"hi");
 /// assert_eq!(bytea(r"\x00415c").escaped().to_string(), r"\000A\\");
 /// assert!(bytea(r"\x00") < bytea(r"\x0000"));
 /// assert!(bytea(r"\x0000") < bytea(r"\x01"));
