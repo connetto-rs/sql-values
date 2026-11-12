@@ -267,6 +267,7 @@ const TIMES: &[&str] = &[
 /// Every literal of [`TIMES`] as `time` and `timetz` under each `DateStyle` order, in a session
 /// zone with daylight saving, read at the transaction's start PostgreSQL reports beside it.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_every_time_literal_under_each_order() {
     let mut conn = pg18_conn();
     let zone_name = "Europe/Rome";
@@ -448,6 +449,7 @@ fn zones() -> Vec<(&'static str, PgTimeZone)> {
 }
 
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_local_timestamptz_in_each_zone() {
     let mut conn = pg18_conn();
     let utc = PgTimeZone::parse("UTC").expect("UTC");
@@ -474,6 +476,7 @@ fn pg18_reads_local_timestamptz_in_each_zone() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_converts_between_timestamp_timestamptz_and_date_in_each_zone() {
     let mut conn = pg18_conn();
     let utc = PgTimeZone::parse("UTC").expect("UTC");
@@ -601,6 +604,7 @@ const SETTINGS: &[&str] = &[
 ];
 
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_every_time_zone_setting() {
     let mut conn = pg18_conn();
     let too_long = "A".repeat(256) + "3";
@@ -833,6 +837,7 @@ const DATE_TIME_LITERALS: &[&str] = &[
 /// Every literal of [`DATE_TIME_LITERALS`] under each `DateStyle` order, as `date`,
 /// `timestamp` and `timestamptz`, the last printed at UTC.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_every_date_time_literal_under_each_order() {
     let mut conn = pg18_conn();
     let utc = PgTimeZone::parse("UTC").expect("UTC");
@@ -874,6 +879,7 @@ fn pg18_reads_every_date_time_literal_under_each_order() {
 /// Without an order the crate reads a literal only when every order reads it alike, and
 /// refuses it otherwise.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_refuses_only_the_literals_the_order_decides() {
     let mut conn = pg18_conn();
     let mut answers: Vec<Vec<Result<String, String>>> = Vec::new();
@@ -918,6 +924,7 @@ fn pg18_refuses_only_the_literals_the_order_decides() {
 /// `now`, `today`, `tomorrow` and `yesterday`, read in one statement with the transaction's
 /// start, in a zone where the local date differs from UTC's.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_the_current_time_words() {
     let mut conn = pg18_conn();
     let zone_name = "Pacific/Kiritimati";
@@ -999,6 +1006,7 @@ const ABBREVIATION_CLOCKS: &[&str] = &["2010-07-15 12:00", "2012-01-15 12:00", "
 
 /// Every abbreviation of each bundled set, as PostgreSQL lists it, read at each clock.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_every_abbreviation_of_each_set() {
     let mut conn = pg18_conn();
     let utc = PgTimeZone::parse("UTC").expect("UTC");
@@ -1034,6 +1042,7 @@ fn pg18_reads_every_abbreviation_of_each_set() {
 /// Abbreviations the session's zone uses, which PostgreSQL reads before the set's, and one
 /// neither knows.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_reads_abbreviations_of_the_session_zone() {
     let mut conn = pg18_conn();
     let utc = PgTimeZone::parse("UTC").expect("UTC");

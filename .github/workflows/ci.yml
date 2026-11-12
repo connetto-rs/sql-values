@@ -40,7 +40,7 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
       - run: cargo test --release --all-features
-      - run: cargo test --release --no-default-features --test without_tzdb
+      - run: cargo test --release --no-default-features
       - run: cargo test --release --doc --all-features
       - run: cargo doc --no-deps --all-features
         env:

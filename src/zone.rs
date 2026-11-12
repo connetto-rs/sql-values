@@ -188,6 +188,7 @@ pub enum TimeZoneError {
 /// ```
 /// use sql_values::{PgTimeZone, TimeZoneError};
 ///
+/// #[cfg(feature = "tzdb")]
 /// assert_eq!(PgTimeZone::parse("europe/rome").unwrap().name(), "Europe/Rome");
 /// // A number is hours east of UTC, a POSIX specification hours west of it.
 /// assert_eq!(PgTimeZone::parse("+02").unwrap().name(), "<+02>-02");
@@ -716,8 +717,12 @@ impl PgTimeZone {
     /// use sql_values::PgTimeZone;
     ///
     /// let offset = |setting| PgTimeZone::parse(setting).unwrap().fixed_offset();
-    /// assert_eq!(offset("UTC"), Some(0));
-    /// assert_eq!(offset("Etc/GMT+5"), Some(-18_000));
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     assert_eq!(offset("UTC"), Some(0));
+    ///     assert_eq!(offset("Etc/GMT+5"), Some(-18_000));
+    ///     assert_eq!(offset("Europe/Rome"), None);
+    /// }
     /// assert_eq!(offset("+2"), Some(7_200));
     /// assert_eq!(offset("interval '-01:00'"), Some(-3_600));
     /// assert_eq!(offset("+05:30"), Some(-19_800));
@@ -727,7 +732,6 @@ impl PgTimeZone {
     /// // Daylight saving time that ends at the instant it starts again still has two offsets.
     /// assert_eq!(offset("EST5EDT,0/0,J365/25"), None);
     /// assert_eq!(offset("EST5EDT"), None);
-    /// assert_eq!(offset("Europe/Rome"), None);
     /// ```
     #[must_use]
     pub fn fixed_offset(&self) -> Option<i32> {

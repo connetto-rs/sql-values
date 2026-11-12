@@ -102,6 +102,7 @@ fn files_postgresql_refuses_name_its_message() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn files_postgresql_accepts_read_as_it_reads_them() {
     assert_eq!(
         read("Good", "2026-01-15 12:00 foo"),

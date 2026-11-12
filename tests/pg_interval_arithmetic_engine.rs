@@ -363,6 +363,7 @@ fn pg18_shifts_every_time() {
 /// `timestamptz ± interval` under each zone as the session's `TimeZone`, the result printed at
 /// UTC so that both sides print the same instant.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_shifts_every_timestamptz_in_each_zone() {
     let mut conn = connect();
     let utc = PgTimeZone::parse("UTC").expect("UTC");
@@ -410,6 +411,7 @@ fn pg18_shifts_every_timestamptz_in_each_zone() {
 
 /// An IANA zone asked about a local clock past jiff's years refuses, naming jiff's bound.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn shifts_in_an_iana_zone_refuse_past_jiff_years() {
     let rome = PgTimeZone::parse("Europe/Rome").expect("Europe/Rome");
     let late = PgTimestampTz::parse("9999-12-20 00:00:00+00", InputContext::new()).expect("late");

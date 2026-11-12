@@ -25,10 +25,13 @@ let at = parse_timestamp("294276-12-31 10:00:00").unwrap();
 let day = parse_interval("1 day").unwrap();
 assert_eq!(day.subtract_from_timestamp(at).unwrap().to_string(), "294276-12-30 10:00:00");
 
-let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-let noon = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
-let before = day.subtract_from_timestamptz(noon, &rome).unwrap();
-assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+#[cfg(feature = "tzdb")]
+{
+    let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    let noon = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
+    let before = day.subtract_from_timestamptz(noon, &rome).unwrap();
+    assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+}
 
 let level = cast_literal(Literal::Number("2.7"), CastTarget::Integer).unwrap();
 assert_eq!(level.to_string(), "3");

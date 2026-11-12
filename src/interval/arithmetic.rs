@@ -321,11 +321,14 @@ impl PgInterval {
     /// ```
     /// use sql_values::{InputContext, PgTimeZone, PgTimestampTz, parse_interval};
     ///
-    /// let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-    /// let at = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
-    /// let day = parse_interval("1 day").unwrap();
-    /// let before = day.subtract_from_timestamptz(at, &rome).unwrap();
-    /// assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    ///     let at = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
+    ///     let day = parse_interval("1 day").unwrap();
+    ///     let before = day.subtract_from_timestamptz(at, &rome).unwrap();
+    ///     assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+    /// }
     /// ```
     pub fn add_to_timestamptz(
         self,

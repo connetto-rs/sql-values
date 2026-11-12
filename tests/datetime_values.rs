@@ -181,6 +181,7 @@ fn timestamptz_holds_postgresql_range_and_prints_at_utc() {
 /// Zones are equal when `SHOW timezone` names them alike, whatever the spelling they were read
 /// from.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn time_zones_equal_by_canonical_name() {
     let zone =
         |setting| PgTimeZone::parse(setting).unwrap_or_else(|error| panic!("{setting}: {error}"));

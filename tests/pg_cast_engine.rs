@@ -359,6 +359,7 @@ const NUMBERS: &[&str] = &[
 
 /// Every literal under every target, skipping the casts the crate declines.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn pg18_casts_every_literal_to_every_target() {
     let mut conn = connect();
     let mut mismatches = Vec::new();
