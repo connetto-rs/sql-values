@@ -17,12 +17,13 @@ all-features = true
 [features]
 default = []
 decimal = ["dep:bigdecimal"]
-jiff = []
+jiff = ["dep:jiff"]
 serde = ["dep:serde"]
+tzdb = ["dep:jiff", "jiff/tzdb-bundle-always"]
 
 [dependencies]
 bigdecimal = { version = "0.4", default-features = false, optional = true }
-jiff = { version = "0.2.39", default-features = false, features = ["alloc", "tzdb-bundle-always"] }
+jiff = { version = "0.2.39", default-features = false, features = ["alloc"], optional = true }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 thiserror = { version = "2", default-features = false }
 

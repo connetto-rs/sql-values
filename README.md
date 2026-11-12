@@ -37,4 +37,4 @@ let third = PgNumeric::parse("10").unwrap().checked_div(&PgNumeric::from(3)).unw
 assert_eq!(third.to_string(), "3.3333333333333333");
 ```
 
-The crate supports `no_std`. Decimal parsing is available through the `decimal` feature, conversions to and from jiff's date and time types through the `jiff` feature, and `serde` derives for interval, date and time values through the `serde` feature.
+The crate supports `no_std`. IANA time zone names such as `Europe/Rome` load from jiff's bundled database through the `tzdb` feature, and without it a zone setting reads as in a PostgreSQL with no time zone files, accepting `GMT`, offsets and POSIX rules. Decimal parsing is available through the `decimal` feature, conversions to and from jiff's date and time types through the `jiff` feature, and `serde` derives for interval, date and time values through the `serde` feature.
