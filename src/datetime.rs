@@ -427,9 +427,12 @@ impl PgTimestamp {
     /// ```
     /// use sql_values::{InputContext, PgTimeZone, PgTimestamp};
     ///
-    /// let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-    /// let gap = PgTimestamp::parse("2026-03-29 02:30:00", InputContext::new()).unwrap();
-    /// assert_eq!(gap.to_timestamptz(&rome).unwrap().to_string(), "2026-03-29 01:30:00+00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    ///     let gap = PgTimestamp::parse("2026-03-29 02:30:00", InputContext::new()).unwrap();
+    ///     assert_eq!(gap.to_timestamptz(&rome).unwrap().to_string(), "2026-03-29 01:30:00+00");
+    /// }
     /// ```
     pub fn to_timestamptz(self, zone: &PgTimeZone) -> Result<PgTimestampTz, DateTimeError> {
         if !self.is_finite() {
@@ -491,9 +494,12 @@ impl PgTimestampTz {
     /// ```
     /// use sql_values::{InputContext, PgTimeZone, PgTimestampTz};
     ///
-    /// let sydney = PgTimeZone::parse("Australia/Sydney").unwrap();
-    /// let at = PgTimestampTz::parse("2026-01-01 00:00:00+00", InputContext::new()).unwrap();
-    /// assert_eq!(at.to_timestamp(&sydney).unwrap().to_string(), "2026-01-01 11:00:00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let sydney = PgTimeZone::parse("Australia/Sydney").unwrap();
+    ///     let at = PgTimestampTz::parse("2026-01-01 00:00:00+00", InputContext::new()).unwrap();
+    ///     assert_eq!(at.to_timestamp(&sydney).unwrap().to_string(), "2026-01-01 11:00:00");
+    /// }
     /// ```
     pub fn to_timestamp(self, zone: &PgTimeZone) -> Result<PgTimestamp, DateTimeError> {
         if !self.is_finite() {

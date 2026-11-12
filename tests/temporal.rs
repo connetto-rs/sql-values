@@ -328,6 +328,7 @@ fn refuses_temporal_negative_corpus() {
 /// A `timetz` whose offset the date decides, written without one, takes the current date in
 /// the session's time zone, which the context must give.
 #[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
 fn timetz_without_a_date_needs_the_current_time() {
     let start = PgTimestampTz::parse("2026-01-15 12:00+00", InputContext::new()).expect("a start");
     for text in ["12:00", "12:00 MSK", "now"] {

@@ -25,14 +25,17 @@ const EPOCH_DAYS: i32 = -10_957;
 /// ```
 /// use sql_values::{DateTimeError, InputContext, PgTimeZone, PgTimestampTz, TimeZoneAbbreviations};
 ///
-/// let rome = PgTimeZone::parse("Europe/Rome").unwrap();
 /// let local = "2026-07-01 12:00:00";
 /// assert_eq!(
 ///     PgTimestampTz::parse(local, InputContext::new()),
 ///     Err(DateTimeError::NeedsTimeZone),
 /// );
-/// let at = PgTimestampTz::parse(local, InputContext::new().with_time_zone(&rome)).unwrap();
-/// assert_eq!(at.to_string(), "2026-07-01 10:00:00+00");
+/// #[cfg(feature = "tzdb")]
+/// {
+///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+///     let at = PgTimestampTz::parse(local, InputContext::new().with_time_zone(&rome)).unwrap();
+///     assert_eq!(at.to_string(), "2026-07-01 10:00:00+00");
+/// }
 ///
 /// // `EST` is New York's time in `Default` and Brisbane's in `Australia`.
 /// let australia = TimeZoneAbbreviations::bundled("Australia").unwrap();
@@ -294,14 +297,21 @@ impl PgTimestampTz {
     ///     Err(DateTimeError::TimeZoneDisplacementOutOfRange),
     /// );
     /// // `MSK` follows Europe/Moscow, which kept +04 from 2011 to 2014.
-    /// assert_eq!(read("2012-01-01 12:00 MSK", context).unwrap(), "2012-01-01 08:00:00+00");
-    /// assert_eq!(read("2015-01-01 12:00 MSK", context).unwrap(), "2015-01-01 09:00:00+00");
-    /// assert_eq!(read("2026-07-01 12:00 Europe/Rome", context).unwrap(), "2026-07-01 10:00:00+00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     assert_eq!(read("2012-01-01 12:00 MSK", context).unwrap(), "2012-01-01 08:00:00+00");
+    ///     assert_eq!(read("2015-01-01 12:00 MSK", context).unwrap(), "2015-01-01 09:00:00+00");
+    ///     let rome = read("2026-07-01 12:00 Europe/Rome", context);
+    ///     assert_eq!(rome.unwrap(), "2026-07-01 10:00:00+00");
+    /// }
     /// assert_eq!(read("now", context), Err(DateTimeError::NeedsCurrentTime));
-    /// let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-    /// let start = PgTimestampTz::parse("2026-07-01 23:30+00", context).unwrap();
-    /// let session = context.with_time_zone(&rome).with_now(start);
-    /// assert_eq!(read("today", session).unwrap(), "2026-07-01 22:00:00+00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    ///     let start = PgTimestampTz::parse("2026-07-01 23:30+00", context).unwrap();
+    ///     let session = context.with_time_zone(&rome).with_now(start);
+    ///     assert_eq!(read("today", session).unwrap(), "2026-07-01 22:00:00+00");
+    /// }
     /// ```
     pub fn parse(text: &str, context: InputContext<'_>) -> Result<Self, DateTimeError> {
         by_date_order(context, |context| Self::read(text, context))
@@ -359,8 +369,12 @@ impl PgTime {
     /// assert_eq!(read("23:59:60").unwrap(), "24:00:00");
     /// assert_eq!(read("12:00:00.1234565").unwrap(), "12:00:00.123456");
     /// assert_eq!(read("040506.5 PM").unwrap(), "16:05:06.5");
-    /// assert_eq!(read("T12:00 Europe/Rome"), Err(DateTimeError::InvalidInputSyntax(PgType::Time)));
-    /// assert_eq!(read("2026-07-01 12:00 Europe/Rome").unwrap(), "12:00:00");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let error = DateTimeError::InvalidInputSyntax(PgType::Time);
+    ///     assert_eq!(read("T12:00 Europe/Rome"), Err(error));
+    ///     assert_eq!(read("2026-07-01 12:00 Europe/Rome").unwrap(), "12:00:00");
+    /// }
     /// assert_eq!(read("24:00:00.000001"), Err(DateTimeError::FieldValueOutOfRange));
     /// ```
     pub fn parse(text: &str, context: InputContext<'_>) -> Result<Self, DateTimeError> {
@@ -392,12 +406,16 @@ impl PgTimeTz {
     /// let context = InputContext::new();
     /// assert_eq!(read("12:00:00-05:30", context).unwrap(), "12:00:00-05:30");
     /// assert_eq!(read("allballs", context).unwrap(), "00:00:00+00");
+    /// #[cfg(feature = "tzdb")]
     /// assert_eq!(read("2026-07-01 12:00 Europe/Rome", context).unwrap(), "12:00:00+02");
     /// assert_eq!(read("12:00", context), Err(DateTimeError::NeedsCurrentTime));
-    /// let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-    /// let start = PgTimestampTz::parse("2026-01-15 12:00+00", context).unwrap();
-    /// let session = context.with_time_zone(&rome).with_now(start);
-    /// assert_eq!(read("12:00", session).unwrap(), "12:00:00+01");
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    ///     let start = PgTimestampTz::parse("2026-01-15 12:00+00", context).unwrap();
+    ///     let session = context.with_time_zone(&rome).with_now(start);
+    ///     assert_eq!(read("12:00", session).unwrap(), "12:00:00+01");
+    /// }
     /// ```
     pub fn parse(text: &str, context: InputContext<'_>) -> Result<Self, DateTimeError> {
         by_date_order(context, |context| Self::read(text, context))

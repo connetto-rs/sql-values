@@ -25,10 +25,13 @@ let at = parse_timestamp("294276-12-31 10:00:00").unwrap();
 let day = parse_interval("1 day").unwrap();
 assert_eq!(day.subtract_from_timestamp(at).unwrap().to_string(), "294276-12-30 10:00:00");
 
-let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-let noon = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
-let before = day.subtract_from_timestamptz(noon, &rome).unwrap();
-assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+#[cfg(feature = "tzdb")]
+{
+    let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    let noon = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
+    let before = day.subtract_from_timestamptz(noon, &rome).unwrap();
+    assert_eq!(before.to_string(), "2026-03-28 11:00:00+00");
+}
 
 let level = cast_literal(Literal::Number("2.7"), CastTarget::Integer).unwrap();
 assert_eq!(level.to_string(), "3");
@@ -37,4 +40,4 @@ let third = PgNumeric::parse("10").unwrap().checked_div(&PgNumeric::from(3)).unw
 assert_eq!(third.to_string(), "3.3333333333333333");
 ```
 
-The crate supports `no_std`. Decimal parsing is available through the `decimal` feature, conversions to and from jiff's date and time types through the `jiff` feature, and `serde` derives for interval, date and time values through the `serde` feature.
+The crate supports `no_std`. IANA time zone names such as `Europe/Rome` load from jiff's bundled database through the `tzdb` feature, and without it a zone setting reads as in a PostgreSQL with no time zone files, accepting `GMT`, offsets and POSIX rules. Decimal parsing is available through the `decimal` feature, conversions to and from jiff's date and time types through the `jiff` feature, and `serde` derives for interval, date and time values through the `serde` feature.

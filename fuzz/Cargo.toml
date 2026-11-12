@@ -13,7 +13,7 @@ bigdecimal = { version = "0.4", default-features = false }
 
 [dependencies.sql-values]
 path = ".."
-features = ["decimal"]
+features = ["decimal", "tzdb"]
 
 [[bin]]
 name = "fuzz_timestamp"
