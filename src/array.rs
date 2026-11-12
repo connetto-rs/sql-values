@@ -1,13 +1,18 @@
 //! PostgreSQL 18's arrays, one dimension per bound and length, the elements in row-major order,
-//! equal, ordered and hashed as `array_cmp` and `array_eq` compare them, and printed as
-//! `array_out` prints them under the default `DateStyle` of `ISO`.
+//! read from their text as `array_in` reads it, printed as `array_out` prints it under the
+//! default `DateStyle` of `ISO`, ordered and equated as `array_cmp` and `array_eq` do, and cast
+//! element by element.
 //!
 //! ```
-//! use sql_values::{ArrayDim, PgArray, PgValue};
+//! use sql_values::{ArrayDim, CastTarget, PgArray, PgValue};
 //!
-//! let array = PgArray::new(vec![Some(PgValue::Integer(1)), None]);
-//! assert_eq!(array.to_string(), "{1,NULL}");
-//! assert_eq!(array.dims(), &[ArrayDim::new(1, 2).unwrap()]);
+//! let array = PgArray::parse("{1,2,NULL}", CastTarget::Integer).unwrap();
+//! assert_eq!(array.to_string(), "{1,2,NULL}");
+//! assert_eq!(array.dims(), &[ArrayDim::new(1, 3).unwrap()]);
+//! assert_eq!(
+//!     array.elements(),
+//!     &[Some(PgValue::Integer(1)), Some(PgValue::Integer(2)), None],
+//! );
 //!
 //! let lower = PgArray::with_dims(
 //!     vec![ArrayDim::new(0, 2).unwrap()],
@@ -17,14 +22,22 @@
 //! assert_eq!(lower.to_string(), "[0:1]={1,2}");
 //! ```
 
-use alloc::{string::ToString, vec, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::{
     cmp::Ordering,
     fmt,
     hash::{Hash, Hasher},
 };
 
-use crate::{cast::is_pg_space, value::PgValue};
+use crate::{
+    cast::{CastError, CastTarget, CastValue, Literal, cast_literal, cast_value, is_pg_space},
+    integer::IntegerType,
+    value::PgValue,
+};
 
 /// The most array dimensions PostgreSQL allows, `MAXDIM`.
 const MAX_DIMS: usize = 6;
@@ -176,6 +189,187 @@ impl PgArray {
     pub fn elements(&self) -> &[Option<PgValue>] {
         &self.elements
     }
+
+    /// PostgreSQL 18's `array_in` for an array of `element`, each element read by that type's
+    /// input function, `NULL` for an unquoted, unescaped spelling of `null`, and the dimensions
+    /// from the text's `[l:u]` items or from the nesting.
+    ///
+    /// ```
+    /// use sql_values::{CastError, CastTarget, PgArray};
+    ///
+    /// let array = PgArray::parse("[0:1]={1,2}", CastTarget::Integer).unwrap();
+    /// assert_eq!(array.to_string(), "[0:1]={1,2}");
+    /// assert_eq!(
+    ///     PgArray::parse("{1,2}x", CastTarget::Integer),
+    ///     Err(CastError::MalformedArrayLiteral),
+    /// );
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The [`CastError`] PostgreSQL's `array_in` raises, the error the element's input function
+    /// raises for an element, or [`CastError::Unsupported`] for an element type this crate does
+    /// not hold.
+    pub fn parse(text: &str, element: CastTarget) -> Result<Self, CastError> {
+        supported(element)?;
+        let chars: Vec<char> = text.chars().collect();
+        let mut at = 0;
+        let (mut ndim, bounds) = read_dimensions(&chars, &mut at)?;
+        let specified = ndim > 0;
+        if specified && chars.get(at).copied() != Some('=') {
+            return Err(CastError::MalformedArrayLiteral);
+        }
+        at += usize::from(specified);
+        skip_space(&chars, &mut at);
+        if chars.get(at).copied() != Some('{') {
+            return Err(CastError::MalformedArrayLiteral);
+        }
+        at += 1;
+
+        let mut dim: [Option<i64>; MAX_DIMS] = [None; MAX_DIMS];
+        let mut lbound: [i32; MAX_DIMS] = [1; MAX_DIMS];
+        for (i, (lower, length)) in bounds.iter().enumerate() {
+            dim[i] = Some(*length);
+            lbound[i] = *lower;
+        }
+        let mut nelems: [usize; MAX_DIMS] = [0; MAX_DIMS];
+        // The outer brace is the first level, as the token loop reads it.
+        if ndim == 0 {
+            ndim = 1;
+        }
+        let mut nest = 1;
+        let mut frozen = specified;
+        let mut expect_delim = false;
+        let mut elements: Vec<Option<PgValue>> = Vec::new();
+
+        loop {
+            let token = read_token(&chars, &mut at)?;
+            match token {
+                Token::LevelStart => {
+                    if expect_delim {
+                        return Err(CastError::MalformedArrayLiteral);
+                    }
+                    if nest >= MAX_DIMS {
+                        return Err(CastError::ArrayDimensionsExceeded);
+                    }
+                    nelems[nest] = 0;
+                    nest += 1;
+                    if nest > ndim {
+                        if frozen {
+                            return Err(CastError::MalformedArrayLiteral);
+                        }
+                        ndim = nest;
+                    }
+                }
+                Token::LevelEnd => {
+                    if nelems[nest - 1] > 0 && !expect_delim {
+                        return Err(CastError::MalformedArrayLiteral);
+                    }
+                    nest -= 1;
+                    if nest > 0 {
+                        nelems[nest - 1] += 1;
+                    }
+                    let count = i64::try_from(nelems[nest]).expect("a count");
+                    match dim[nest] {
+                        None => dim[nest] = Some(count),
+                        Some(length) if length != count => {
+                            return Err(CastError::MalformedArrayLiteral);
+                        }
+                        Some(_) => {}
+                    }
+                    expect_delim = true;
+                }
+                Token::Delim => {
+                    if !expect_delim {
+                        return Err(CastError::MalformedArrayLiteral);
+                    }
+                    expect_delim = false;
+                }
+                Token::Elem(element_text) => {
+                    if expect_delim {
+                        return Err(CastError::MalformedArrayLiteral);
+                    }
+                    // The input function runs before the dimension check, as `ReadArrayStr`
+                    // orders it, so its error wins.
+                    let element = element_text
+                        .map(|text| read_element(&text, element))
+                        .transpose()?;
+                    if nest != ndim {
+                        return Err(CastError::MalformedArrayLiteral);
+                    }
+                    frozen = true;
+                    elements.push(element);
+                    nelems[nest - 1] += 1;
+                    expect_delim = true;
+                }
+            }
+            if nest == 0 {
+                break;
+            }
+        }
+
+        skip_space(&chars, &mut at);
+        if at != chars.len() {
+            return Err(CastError::MalformedArrayLiteral);
+        }
+
+        if elements.is_empty() {
+            // `construct_empty_array`, which keeps no dimension.
+            return Ok(Self {
+                dims: Vec::new(),
+                elements,
+            });
+        }
+        let dims = (0..ndim)
+            .map(|i| {
+                ArrayDim::new(
+                    lbound[i],
+                    u32::try_from(dim[i].expect("a read dimension")).expect("a length"),
+                )
+                .expect("a bound")
+            })
+            .collect();
+        Ok(Self { dims, elements })
+    }
+
+    /// The explicit cast of every element to `element`, as [`cast_value`] casts it, `NULL`s kept
+    /// and the dimensions kept.
+    ///
+    /// ```
+    /// use sql_values::{CastError, CastTarget, PgArray};
+    ///
+    /// let array = PgArray::parse("{1.5}", CastTarget::Numeric(None)).unwrap();
+    /// assert_eq!(array.cast(CastTarget::Integer).unwrap().to_string(), "{2}");
+    /// assert_eq!(
+    ///     PgArray::parse("{1}", CastTarget::Integer)
+    ///         .unwrap()
+    ///         .cast(CastTarget::Bpchar(None)),
+    ///     Err(CastError::Unsupported),
+    /// );
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The [`CastError`] the element's cast raises for an element, or
+    /// [`CastError::Unsupported`] for an element type this crate does not hold.
+    pub fn cast(&self, element: CastTarget) -> Result<Self, CastError> {
+        supported(element)?;
+        let elements = self
+            .elements
+            .iter()
+            .map(|value| match value {
+                None => Ok(None),
+                Some(value) => {
+                    let value = cast_value(element_value(value)?, element)?;
+                    into_value(value).map(Some)
+                }
+            })
+            .collect::<Result<Vec<Option<PgValue>>, CastError>>()?;
+        Ok(Self {
+            dims: self.dims.clone(),
+            elements,
+        })
+    }
 }
 
 impl PartialEq for PgArray {
@@ -301,9 +495,244 @@ fn quotes(byte: u8) -> bool {
     matches!(byte, b'"' | b'\\' | b'{' | b'}' | b',') || is_pg_space(byte)
 }
 
+/// `scanner_isspace`, the whitespace of the array literal, the C locale's `isspace`.
+fn is_space(c: char) -> bool {
+    u8::try_from(c).is_ok_and(is_pg_space)
+}
+
+/// The element's value as a [`CastValue`], its integer held at the width the value takes.
+fn element_value(value: &PgValue) -> Result<CastValue, CastError> {
+    let width = match value {
+        PgValue::Integer(value) if i32::try_from(*value).is_err() => IntegerType::Bigint,
+        _ => IntegerType::Integer,
+    };
+    value.clone().into_cast_value(width)
+}
+
+/// The element's value, its text read by the element type's input function.
+fn read_element(text: &str, element: CastTarget) -> Result<PgValue, CastError> {
+    into_value(cast_literal(Literal::Quoted(text), element)?)
+}
+
+/// The [`PgValue`] the crate holds for the `CastValue` an element read, or
+/// `CastError::Unsupported` when it holds none.
+fn into_value(value: CastValue) -> Result<PgValue, CastError> {
+    PgValue::try_from(value).map_err(|_| CastError::Unsupported)
+}
+
+/// `Ok` when the crate holds `element` as an array element, `CastError::Unsupported` when it
+/// does not.
+fn supported(element: CastTarget) -> Result<(), CastError> {
+    if matches!(element, CastTarget::Bpchar(_) | CastTarget::TimestampTz(_)) {
+        Err(CastError::Unsupported)
+    } else {
+        Ok(())
+    }
+}
+
+/// The token `array_in` reads at `at`, left past it.
+enum Token {
+    /// A `{` opening a level.
+    LevelStart,
+    /// A `}` closing a level.
+    LevelEnd,
+    /// A `,`.
+    Delim,
+    /// An element, its quotes and escapes decoded, `None` for a `NULL` element.
+    Elem(Option<String>),
+}
+
+/// The token at `at`, past leading whitespace.
+fn read_token(chars: &[char], at: &mut usize) -> Result<Token, CastError> {
+    loop {
+        let Some(&c) = chars.get(*at) else {
+            return Err(CastError::MalformedArrayLiteral);
+        };
+        match c {
+            '{' => {
+                *at += 1;
+                return Ok(Token::LevelStart);
+            }
+            '}' => {
+                *at += 1;
+                return Ok(Token::LevelEnd);
+            }
+            ',' => {
+                *at += 1;
+                return Ok(Token::Delim);
+            }
+            '"' => {
+                *at += 1;
+                return read_quoted(chars, at);
+            }
+            _ if is_space(c) => *at += 1,
+            _ => return read_unquoted(chars, at),
+        }
+    }
+}
+
+/// The character the backslash at `at` escapes, `at` left past it.
+fn read_escaped(chars: &[char], at: &mut usize) -> Result<char, CastError> {
+    *at += 1;
+    let Some(&escaped) = chars.get(*at) else {
+        return Err(CastError::MalformedArrayLiteral);
+    };
+    *at += 1;
+    Ok(escaped)
+}
+
+/// The `"…"` element, `at` left at the delimiter or brace following it.
+fn read_quoted(chars: &[char], at: &mut usize) -> Result<Token, CastError> {
+    let mut value = String::new();
+    loop {
+        let Some(&c) = chars.get(*at) else {
+            return Err(CastError::MalformedArrayLiteral);
+        };
+        match c {
+            '\\' => value.push(read_escaped(chars, at)?),
+            '"' => {
+                *at += 1;
+                skip_space(chars, at);
+                return match chars.get(*at) {
+                    Some(&(',' | '}' | '{')) => Ok(Token::Elem(Some(value))),
+                    _ => Err(CastError::MalformedArrayLiteral),
+                };
+            }
+            _ => {
+                value.push(c);
+                *at += 1;
+            }
+        }
+    }
+}
+
+/// The unquoted element, its trailing whitespace dropped, `NULL` when it spells `null` without
+/// escapes.
+fn read_unquoted(chars: &[char], at: &mut usize) -> Result<Token, CastError> {
+    let mut value = String::new();
+    let mut solid = 0;
+    let mut escaped = false;
+    loop {
+        let Some(&c) = chars.get(*at) else {
+            return Err(CastError::MalformedArrayLiteral);
+        };
+        match c {
+            '{' | '"' => return Err(CastError::MalformedArrayLiteral),
+            '\\' => {
+                value.push(read_escaped(chars, at)?);
+                solid = value.len();
+                escaped = true;
+            }
+            ',' | '}' => {
+                value.truncate(solid);
+                let token = if escaped || !value.eq_ignore_ascii_case("NULL") {
+                    Token::Elem(Some(value))
+                } else {
+                    Token::Elem(None)
+                };
+                return Ok(token);
+            }
+            _ => {
+                value.push(c);
+                if !is_space(c) {
+                    solid = value.len();
+                }
+                *at += 1;
+            }
+        }
+    }
+}
+
+/// `at` left past the whitespace.
+fn skip_space(chars: &[char], at: &mut usize) {
+    while chars.get(*at).copied().is_some_and(is_space) {
+        *at += 1;
+    }
+}
+
+/// The `[n]` and `[m:n]` items before the `{`, each the lower bound and length PostgreSQL reads.
+fn read_dimensions(chars: &[char], at: &mut usize) -> Result<(usize, Vec<(i32, i64)>), CastError> {
+    let mut ndim = 0;
+    let mut dims: Vec<(i32, i64)> = Vec::new();
+    loop {
+        skip_space(chars, at);
+        if chars.get(*at).copied() != Some('[') {
+            break;
+        }
+        *at += 1;
+        if ndim == MAX_DIMS {
+            return Err(CastError::ArrayDimensionsExceeded);
+        }
+        let first = read_bounded(chars, at)?;
+        let (lower, upper) = if chars.get(*at).copied() == Some(':') {
+            *at += 1;
+            (first, read_bounded(chars, at)?)
+        } else {
+            (1, first)
+        };
+        if chars.get(*at).copied() != Some(']') {
+            return Err(CastError::MalformedArrayLiteral);
+        }
+        *at += 1;
+        if upper < lower {
+            return Err(CastError::UpperBoundLessThanLower);
+        }
+        if upper == i32::MAX {
+            return Err(CastError::ArrayUpperBoundTooLarge(upper));
+        }
+        let length = i64::from(upper) - i64::from(lower) + 1;
+        if length > i64::from(i32::MAX) {
+            return Err(CastError::ArraySizeExceeded);
+        }
+        dims.push((lower, length));
+        ndim += 1;
+    }
+    Ok((ndim, dims))
+}
+
+/// The bound's integer, `0` when none, `at` left where the read stopped.
+fn read_bound(chars: &[char], at: &mut usize) -> Result<i32, CastError> {
+    match chars.get(*at) {
+        Some(&c) if c.is_ascii_digit() || c == '-' || c == '+' => {}
+        _ => return Ok(0),
+    }
+    let mut i = *at;
+    let negative = chars.get(i).copied() == Some('-');
+    i += usize::from(matches!(chars.get(i), Some('-') | Some('+')));
+    let digit_at = i;
+    let mut magnitude: i128 = 0;
+    while let Some(&digit) = chars.get(i) {
+        if !digit.is_ascii_digit() {
+            break;
+        }
+        magnitude = magnitude * 10 + i128::from(digit.to_digit(10).expect("a digit"));
+        if magnitude > i128::from(i64::MAX) {
+            magnitude = i128::from(i64::MAX) + 1;
+        }
+        i += 1;
+    }
+    if i == digit_at {
+        return Ok(0);
+    }
+    *at = i;
+    let value = if negative { -magnitude } else { magnitude };
+    i32::try_from(value).map_err(|_| CastError::ArrayBoundOutOfRange)
+}
+
+/// The bound `at` reads, which must consume at least one character.
+fn read_bounded(chars: &[char], at: &mut usize) -> Result<i32, CastError> {
+    let start = *at;
+    let bound = read_bound(chars, at)?;
+    if *at == start {
+        return Err(CastError::MalformedArrayLiteral);
+    }
+    Ok(bound)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cast::PgType;
 
     fn dim(lower: i32, length: u32) -> ArrayDim {
         ArrayDim::new(lower, length).expect("a bound")
@@ -345,6 +774,148 @@ mod tests {
         );
         assert!(PgArray::with_dims(vec![], Vec::new()).is_some());
     }
+
+    #[test]
+    fn parse_reads_the_array_in_forms() {
+        let array = PgArray::parse(" { 1 , 2 } ", CastTarget::Integer).unwrap();
+        assert_eq!(array.to_string(), "{1,2}");
+        assert_eq!(
+            PgArray::parse("[0:1]={1,2}", CastTarget::Integer)
+                .unwrap()
+                .to_string(),
+            "[0:1]={1,2}"
+        );
+        assert_eq!(
+            PgArray::parse("{nUlL}", CastTarget::Integer)
+                .unwrap()
+                .to_string(),
+            "{NULL}"
+        );
+        assert_eq!(
+            PgArray::parse("{\"a b\"}", CastTarget::Text)
+                .unwrap()
+                .to_string(),
+            "{\"a b\"}"
+        );
+        assert_eq!(
+            PgArray::parse(r#"{a\b}"#, CastTarget::Text)
+                .unwrap()
+                .to_string(),
+            "{ab}"
+        );
+        assert_eq!(
+            PgArray::parse(r#"{a\ b c}"#, CastTarget::Text)
+                .unwrap()
+                .to_string(),
+            r#"{"a b c"}"#
+        );
+        assert_eq!(
+            PgArray::parse("{}[1:1]", CastTarget::Integer),
+            Err(CastError::MalformedArrayLiteral)
+        );
+        assert!(
+            PgArray::parse("{}", CastTarget::Integer)
+                .unwrap()
+                .dims()
+                .is_empty()
+        );
+        assert!(
+            PgArray::parse("{{}}", CastTarget::Integer)
+                .unwrap()
+                .dims()
+                .is_empty()
+        );
+        assert_eq!(
+            PgArray::parse("[1:2]=", CastTarget::Integer),
+            Err(CastError::MalformedArrayLiteral)
+        );
+        assert_eq!(
+            PgArray::parse("{1}", CastTarget::Bpchar(None)),
+            Err(CastError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn parse_refuses_as_array_in_refuses() {
+        let cases: &[(&str, CastError)] = &[
+            ("{1,}", CastError::MalformedArrayLiteral),
+            ("{,1}", CastError::MalformedArrayLiteral),
+            ("{1,2}x", CastError::MalformedArrayLiteral),
+            ("{1", CastError::MalformedArrayLiteral),
+            ("{\"a", CastError::MalformedArrayLiteral),
+            ("[1:2]{1,2}", CastError::MalformedArrayLiteral),
+            ("[1:0]={1,2}", CastError::UpperBoundLessThanLower),
+            (
+                "[1:2147483647]=",
+                CastError::ArrayUpperBoundTooLarge(i32::MAX),
+            ),
+            ("[-1:2147483646]=", CastError::ArraySizeExceeded),
+            ("[2147483648:2]=", CastError::ArrayBoundOutOfRange),
+            ("[-2147483649:2]=", CastError::ArrayBoundOutOfRange),
+            ("[1][1][1][1][1][1][1]=", CastError::ArrayDimensionsExceeded),
+            ("{{{{{{{1}}}}}}}", CastError::ArrayDimensionsExceeded),
+            ("{1,{2}}", CastError::MalformedArrayLiteral),
+            ("{a\\", CastError::MalformedArrayLiteral),
+            ("{\"1\"{2}}", CastError::MalformedArrayLiteral),
+            ("{ {1}2 }", CastError::MalformedArrayLiteral),
+            ("{\"a\"", CastError::MalformedArrayLiteral),
+            ("[99999999999999999999:1]=", CastError::ArrayBoundOutOfRange),
+            ("[--:1]=", CastError::MalformedArrayLiteral),
+            ("[1", CastError::MalformedArrayLiteral),
+            ("{abc}", CastError::InvalidInputSyntax(PgType::Integer)),
+            ("{40000}", CastError::ValueOutOfRange(PgType::Smallint)),
+        ];
+        for (text, error) in cases {
+            let target = match error {
+                CastError::InvalidInputSyntax(PgType::Integer) => CastTarget::Integer,
+                CastError::ValueOutOfRange(PgType::Smallint) => CastTarget::Smallint,
+                _ => CastTarget::Integer,
+            };
+            assert_eq!(
+                PgArray::parse(text, target),
+                Err(*error),
+                "parsing {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cast_casts_every_element_as_cast_value_does() {
+        let array = PgArray::parse("{1.5,NaN}", CastTarget::Numeric(None)).unwrap();
+        assert_eq!(
+            array.cast(CastTarget::Integer).unwrap_err(),
+            CastError::CannotConvertNaN(PgType::Integer)
+        );
+        assert_eq!(
+            PgArray::parse("{1.5,-2.5}", CastTarget::Numeric(None))
+                .unwrap()
+                .cast(CastTarget::Smallint)
+                .unwrap()
+                .to_string(),
+            "{2,-3}"
+        );
+        assert_eq!(
+            PgArray::parse("{40000}", CastTarget::Integer)
+                .unwrap()
+                .cast(CastTarget::Smallint),
+            Err(CastError::OutOfRange(PgType::Smallint))
+        );
+        assert_eq!(
+            PgArray::parse("{2026-01-01}", CastTarget::Date)
+                .unwrap()
+                .cast(CastTarget::Timestamp(None))
+                .unwrap()
+                .to_string(),
+            "{\"2026-01-01 00:00:00\"}"
+        );
+        assert_eq!(
+            PgArray::parse("{1,2}", CastTarget::Integer)
+                .unwrap()
+                .cast(CastTarget::TimestampTz(None)),
+            Err(CastError::Unsupported)
+        );
+    }
+
     #[test]
     fn display_prints_as_array_out_prints() {
         assert_eq!(PgArray::new(Vec::new()).to_string(), "{}");
@@ -421,7 +992,7 @@ mod tests {
             .unwrap()
                 < pair
         );
-        let left = PgArray::new(vec![Some(PgValue::Integer(1)), Some(PgValue::Integer(2))]);
+        let left = PgArray::parse("{1,2}", CastTarget::Integer).unwrap();
         let right = PgArray::with_dims(
             vec![dim(1, 2)],
             vec![Some(PgValue::Integer(1)), Some(PgValue::Integer(2))],
