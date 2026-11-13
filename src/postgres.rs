@@ -6,6 +6,7 @@ mod bytea;
 mod cast;
 mod datetime;
 mod float;
+mod float8;
 mod integer;
 mod interval;
 mod numeric;
@@ -23,11 +24,14 @@ pub use datetime::{
     DateArithmeticError, DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz,
     PgTimestamp, PgTimestampTz, parse_date, parse_time, parse_timestamp, parse_timestamp_tz,
 };
+pub use float8::{Float8Error, PgFloat8};
 pub use integer::IntegerType;
 pub use interval::{
     IntervalError, IntervalFields, IntervalSum, IntervalTypmod, PgInterval, ShiftError,
     parse_interval, parse_interval_typmod,
 };
+#[cfg(feature = "decimal")]
+pub use numeric::NonFiniteNumeric;
 pub use numeric::{NumericError, NumericTypmod, PgNumeric};
 pub use value::PgValue;
 pub use zone::{PgTimeZone, TimeZoneAbbreviations, TimeZoneAbbreviationsError, TimeZoneError};

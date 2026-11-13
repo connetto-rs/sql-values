@@ -741,3 +741,43 @@ impl From<i64> for PgNumeric {
         Self(Repr::Finite(Finite::from_i64(value)))
     }
 }
+
+/// Why a `numeric` has no `BigDecimal`, which holds finite values alone.
+#[cfg(feature = "decimal")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+#[error("NaN and the infinities have no BigDecimal")]
+pub struct NonFiniteNumeric;
+
+/// The finite value at the scale `numeric_out` prints it with, so `1.50` keeps its scale of 2.
+///
+/// ```
+/// use bigdecimal::BigDecimal;
+/// use sql_values::postgres::{NonFiniteNumeric, PgNumeric};
+///
+/// let numeric = |text| PgNumeric::parse(text).unwrap();
+/// assert_eq!(BigDecimal::try_from(&numeric("1.50")).unwrap().to_string(), "1.50");
+/// assert_eq!(BigDecimal::try_from(&numeric("NaN")), Err(NonFiniteNumeric));
+/// ```
+#[cfg(feature = "decimal")]
+impl TryFrom<&PgNumeric> for bigdecimal::BigDecimal {
+    type Error = NonFiniteNumeric;
+
+    fn try_from(numeric: &PgNumeric) -> Result<Self, Self::Error> {
+        use bigdecimal::num_bigint::{BigInt, Sign};
+
+        let Repr::Finite(finite) = &numeric.0 else {
+            return Err(NonFiniteNumeric);
+        };
+        let sign = if finite.negative {
+            Sign::Minus
+        } else {
+            Sign::Plus
+        };
+        let integer = BigInt::from_radix_be(sign, &finite.digits, 10)
+            .expect("numeric digits are decimal digits");
+        let length = i64::try_from(finite.digits.len()).expect("a numeric has under 2^63 digits");
+        // The last digit sits at power `weight - length + 1` of ten.
+        let scale = length - 1 - finite.weight;
+        Ok(Self::new(integer, scale).with_scale(finite.dscale))
+    }
+}

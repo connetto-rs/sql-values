@@ -58,6 +58,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_float8"
+path = "fuzz_targets/fuzz_float8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_pg_bytea_hex"
 path = "fuzz_targets/fuzz_pg_bytea_hex.rs"
 test = false
