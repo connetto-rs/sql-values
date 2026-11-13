@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sql_values::PgBytea;
+use sql_values::postgres::PgBytea;
 
 /// Both of `byteaout`'s spellings of `bytea` read back to it.
 fn assert_round_trips(bytea: &PgBytea, origin: &dyn core::fmt::Debug) {

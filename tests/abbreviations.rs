@@ -2,7 +2,9 @@
 //! each accepted file's meanings measured on the engine with the file installed in its
 //! `timezonesets` directory.
 
-use sql_values::{InputContext, PgTimestampTz, TimeZoneAbbreviations, TimeZoneAbbreviationsError};
+use sql_values::postgres::{
+    InputContext, PgTimestampTz, TimeZoneAbbreviations, TimeZoneAbbreviationsError,
+};
 
 /// The files the cases install, with the bundled ones they include.
 fn file(name: &str) -> Option<&'static str> {

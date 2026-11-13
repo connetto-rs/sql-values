@@ -1,4 +1,4 @@
-use sql_values::{
+use sql_values::postgres::{
     DateTimeError, InputContext, PgTimeTz, PgTimestampTz, parse_date, parse_time, parse_timestamp,
     parse_timestamp_tz,
 };

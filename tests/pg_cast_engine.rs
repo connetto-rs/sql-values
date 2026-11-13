@@ -21,7 +21,7 @@ use diesel::{
     sql_types::{Bool, Integer, Text},
 };
 use pg18::{connect, pg_order, pg_text, quoted};
-use sql_values::{
+use sql_values::postgres::{
     CastError, CastTarget, CastValue, CharLength, IntegerType, Literal, NumericTypmod, PgBpchar,
     PgNumeric, PgType, PgValue, cast_literal, cast_value, number_constant,
 };

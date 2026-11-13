@@ -5,7 +5,7 @@ use jiff::{
     Timestamp,
     civil::{Date, DateTime, Time},
 };
-use sql_values::{
+use sql_values::postgres::{
     DateTimeError, InputContext, PgDate, PgTime, PgTimestamp, PgTimestampTz, parse_date,
     parse_time, parse_timestamp,
 };

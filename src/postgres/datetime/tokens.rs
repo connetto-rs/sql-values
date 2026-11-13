@@ -1,7 +1,7 @@
 //! PostgreSQL 18's `ParseDateTime`, which splits a date, time or interval literal into typed
 //! tokens, and the keyword table and number readers `datetime.c` shares between its decoders.
 
-use crate::float::{round_ties_even, truncate_to_i32};
+use crate::postgres::float::{round_ties_even, truncate_to_i32};
 
 /// `DTERR_BAD_FORMAT`, a literal that is not one PostgreSQL reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

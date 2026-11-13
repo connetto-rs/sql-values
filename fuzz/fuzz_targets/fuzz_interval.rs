@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sql_values::{
+use sql_values::postgres::{
     IntervalFields, IntervalTypmod, PgInterval, parse_interval, parse_interval_typmod,
 };
 

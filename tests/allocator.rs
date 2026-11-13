@@ -3,7 +3,8 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use sql_values::{
-    parse_bool, parse_date, parse_pg_bytea_hex, parse_time, parse_timestamp, parse_timestamp_tz,
+    parse_bool, parse_pg_bytea_hex,
+    postgres::{parse_date, parse_time, parse_timestamp, parse_timestamp_tz},
 };
 
 // This binary runs one test, so the counter needs atomicity without cross-thread ordering.

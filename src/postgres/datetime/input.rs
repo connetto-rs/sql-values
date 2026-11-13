@@ -13,7 +13,7 @@ use super::{
     },
     tokens::{Tokens, parse_date_time, parse_fractional_second, strtoint},
 };
-use crate::{PgTimeZone, PgType, TimeZoneAbbreviations, zone::DEFAULT_ABBREVIATIONS};
+use crate::postgres::{PgTimeZone, PgType, TimeZoneAbbreviations, zone::DEFAULT_ABBREVIATIONS};
 
 /// 1970-01-01 00:00:00, `epoch`, in microseconds from 2000-01-01.
 const EPOCH_MICROS: i64 = -946_684_800_000_000;
@@ -23,7 +23,9 @@ const EPOCH_DAYS: i32 = -10_957;
 /// The session state PostgreSQL's input functions read, which the caller supplies.
 ///
 /// ```
-/// use sql_values::{DateTimeError, InputContext, PgTimeZone, PgTimestampTz, TimeZoneAbbreviations};
+/// use sql_values::postgres::{
+///     DateTimeError, InputContext, PgTimeZone, PgTimestampTz, TimeZoneAbbreviations,
+/// };
 ///
 /// let local = "2026-07-01 12:00:00";
 /// assert_eq!(
@@ -198,7 +200,7 @@ impl PgDate {
     /// [`DateTimeError::NeedsTimeZone`].
     ///
     /// ```
-    /// use sql_values::{DateOrder, DateTimeError, InputContext, PgDate, PgType};
+    /// use sql_values::postgres::{DateOrder, DateTimeError, InputContext, PgDate, PgType};
     ///
     /// let read = |text, context| PgDate::parse(text, context).map(|d| d.to_string());
     /// let context = InputContext::new();
@@ -245,7 +247,7 @@ impl PgTimestamp {
     /// context lacks.
     ///
     /// ```
-    /// use sql_values::{DateTimeError, InputContext, PgTimestamp};
+    /// use sql_values::postgres::{DateTimeError, InputContext, PgTimestamp};
     ///
     /// let read = |text| PgTimestamp::parse(text, InputContext::new()).map(|t| t.to_string());
     /// assert_eq!(read("2024-12-31 24:00:00").unwrap(), "2025-01-01 00:00:00");
@@ -287,7 +289,7 @@ impl PgTimestampTz {
     /// a clock outside jiff's years.
     ///
     /// ```
-    /// use sql_values::{DateTimeError, InputContext, PgTimeZone, PgTimestampTz};
+    /// use sql_values::postgres::{DateTimeError, InputContext, PgTimeZone, PgTimestampTz};
     ///
     /// let read = |text, context| PgTimestampTz::parse(text, context).map(|t| t.to_string());
     /// let context = InputContext::new();
@@ -363,7 +365,7 @@ impl PgTime {
     /// context lacks.
     ///
     /// ```
-    /// use sql_values::{DateTimeError, InputContext, PgTime, PgType};
+    /// use sql_values::postgres::{DateTimeError, InputContext, PgTime, PgType};
     ///
     /// let read = |text| PgTime::parse(text, InputContext::new()).map(|t| t.to_string());
     /// assert_eq!(read("23:59:60").unwrap(), "24:00:00");
@@ -400,7 +402,9 @@ impl PgTimeTz {
     /// a date outside jiff's years.
     ///
     /// ```
-    /// use sql_values::{DateTimeError, InputContext, PgTimeTz, PgTimeZone, PgTimestampTz};
+    /// use sql_values::postgres::{
+    ///     DateTimeError, InputContext, PgTimeTz, PgTimeZone, PgTimestampTz,
+    /// };
     ///
     /// let read = |text, context| PgTimeTz::parse(text, context).map(|t| t.to_string());
     /// let context = InputContext::new();
@@ -461,7 +465,7 @@ impl PgTimeTz {
 /// microsecond. Year `0000`, as MySQL and SQLite print 1 BC, is year 0.
 ///
 /// ```
-/// let at = sql_values::parse_timestamp("2024-01-02 03:04:05.125").unwrap();
+/// let at = sql_values::postgres::parse_timestamp("2024-01-02 03:04:05.125").unwrap();
 /// assert_eq!(at.to_string(), "2024-01-02 03:04:05.125");
 /// ```
 #[must_use]
@@ -482,7 +486,7 @@ pub fn parse_timestamp(text: &str) -> Option<PgTimestamp> {
 /// offset, then PostgreSQL's optional ` BC`, or `infinity` and `-infinity`.
 ///
 /// ```
-/// let at = sql_values::parse_timestamp_tz("2024-01-02T03:04:05+02:00").unwrap();
+/// let at = sql_values::postgres::parse_timestamp_tz("2024-01-02T03:04:05+02:00").unwrap();
 /// assert_eq!(at.to_string(), "2024-01-02 01:04:05+00");
 /// ```
 #[must_use]
@@ -501,7 +505,7 @@ pub fn parse_timestamp_tz(text: &str) -> Option<PgTimestampTz> {
 /// or `infinity` and `-infinity`. Year `0000`, as MySQL and SQLite print 1 BC, is year 0.
 ///
 /// ```
-/// let d = sql_values::parse_date("2024-01-02").unwrap();
+/// let d = sql_values::postgres::parse_date("2024-01-02").unwrap();
 /// assert_eq!(d.to_string(), "2024-01-02");
 /// ```
 #[must_use]
@@ -522,7 +526,7 @@ pub fn parse_date(text: &str) -> Option<PgDate> {
 /// 24:00:00.
 ///
 /// ```
-/// let t = sql_values::parse_time("03:04:05.125").unwrap();
+/// let t = sql_values::postgres::parse_time("03:04:05.125").unwrap();
 /// assert_eq!(t.to_string(), "03:04:05.125");
 /// ```
 #[must_use]

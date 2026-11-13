@@ -15,7 +15,7 @@ use diesel::{
     result::Error as DieselError,
     sql_types::{Bool, Integer, Text},
 };
-use sql_values::{CastError, PgType};
+use sql_values::postgres::{CastError, PgType};
 
 use crate::{exit_slot::ExitSlot, postgres};
 

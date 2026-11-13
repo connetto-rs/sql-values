@@ -5,7 +5,7 @@
 //! `'1.999999999 millisecond'` differently.
 
 use super::{IntervalError, PgInterval};
-use crate::datetime::tokens::{
+use crate::postgres::datetime::tokens::{
     AGO, BadFormat, CENTURY, DATE_TOKENS, DAY, DECADE, DTK_ALL_SECS_M, DTK_CENTURY, DTK_DATE_M,
     DTK_DAY, DTK_DECADE, DTK_DELTA, DTK_EARLY, DTK_HOUR, DTK_LATE, DTK_MICROSEC, DTK_MILLENNIUM,
     DTK_MILLISEC, DTK_MINUTE, DTK_MONTH, DTK_QUARTER, DTK_SECOND, DTK_TIME_M, DTK_TZ, DTK_TZ_HOUR,
@@ -13,7 +13,7 @@ use crate::datetime::tokens::{
     MILLISECOND, MINUTE, MONTH, RESERV, SECOND, Tokens, UNITS, UNKNOWN_FIELD, WEEK, YEAR, dtk_m,
     lookup, parse_date_time, parse_fraction, parse_fractional_second, strtoint, strtoll,
 };
-use crate::float::{
+use crate::postgres::float::{
     fits_in_i32, fits_in_i64, int_to_f64, round_ties_even, truncate_to_i32, truncate_to_i64,
 };
 

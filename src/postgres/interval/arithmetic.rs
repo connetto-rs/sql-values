@@ -4,7 +4,7 @@
 use core::cmp::Ordering;
 
 use super::{IntervalError, PgInterval};
-use crate::{
+use crate::postgres::{
     DateTimeError, PgTime, PgTimeZone, PgTimestamp, PgTimestampTz,
     datetime::{
         MONTHS_PER_YEAR, POSTGRES_EPOCH_JDATE, USECS_PER_DAY, USECS_PER_SEC, date2j, days_in_month,
@@ -77,7 +77,7 @@ impl PgInterval {
     /// opposite infinities meet.
     ///
     /// ```
-    /// use sql_values::{IntervalError, PgInterval, parse_interval};
+    /// use sql_values::postgres::{IntervalError, PgInterval, parse_interval};
     ///
     /// let day = parse_interval("1 day").unwrap();
     /// let hour = parse_interval("-01:00:00").unwrap();
@@ -127,7 +127,7 @@ impl PgInterval {
     /// infinity.
     ///
     /// ```
-    /// use sql_values::{IntervalError, parse_interval};
+    /// use sql_values::postgres::{IntervalError, parse_interval};
     ///
     /// let span = parse_interval("1 mon -2 days").unwrap();
     /// assert_eq!(span.checked_neg().unwrap().to_string(), "-1 mons +2 days");
@@ -157,7 +157,7 @@ impl PgInterval {
     /// factor against a zero interval, and a product beyond the type.
     ///
     /// ```
-    /// use sql_values::{IntervalError, PgInterval, parse_interval};
+    /// use sql_values::postgres::{IntervalError, PgInterval, parse_interval};
     ///
     /// let month = parse_interval("1 mon 1 day").unwrap();
     /// assert_eq!(month.checked_mul(1.5).unwrap().to_string(), "1 mon 16 days 12:00:00");
@@ -194,7 +194,7 @@ impl PgInterval {
     /// a `NaN` factor, an infinity divided by an infinity, and a quotient beyond the type.
     ///
     /// ```
-    /// use sql_values::{IntervalError, parse_interval};
+    /// use sql_values::postgres::{IntervalError, parse_interval};
     ///
     /// let span = parse_interval("1 mon 1 day 00:00:01").unwrap();
     /// assert_eq!(span.checked_div(7.0).unwrap().to_string(), "4 days 10:17:08.6896");
@@ -284,7 +284,7 @@ impl PgInterval {
     /// opposite infinities meet.
     ///
     /// ```
-    /// use sql_values::{parse_interval, parse_timestamp};
+    /// use sql_values::postgres::{parse_interval, parse_timestamp};
     ///
     /// let at = parse_timestamp("2024-01-31 10:00:00").unwrap();
     /// let month = parse_interval("1 mon").unwrap();
@@ -319,7 +319,7 @@ impl PgInterval {
     /// jiff's years.
     ///
     /// ```
-    /// use sql_values::{InputContext, PgTimeZone, PgTimestampTz, parse_interval};
+    /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz, parse_interval};
     ///
     /// #[cfg(feature = "tzdb")]
     /// {
@@ -436,7 +436,7 @@ impl PgInterval {
     /// passes 2^63 microseconds.
     ///
     /// ```
-    /// use sql_values::{PgInterval, parse_timestamp};
+    /// use sql_values::postgres::{PgInterval, parse_timestamp};
     ///
     /// let later = parse_timestamp("2024-03-01 06:00:00").unwrap();
     /// let earlier = parse_timestamp("2024-02-28 12:00:00").unwrap();
@@ -481,7 +481,7 @@ impl PgInterval {
     /// [`ShiftError::InfiniteIntervalAddedToTime`] for an infinite interval.
     ///
     /// ```
-    /// use sql_values::{parse_interval, parse_time};
+    /// use sql_values::postgres::{parse_interval, parse_time};
     ///
     /// let at = parse_time("23:00:00").unwrap();
     /// let span = parse_interval("1 day 02:30:00").unwrap();
@@ -540,7 +540,7 @@ fn wrap_time(moved: i64) -> PgTime {
 /// either in is componentwise addition.
 ///
 /// ```
-/// use sql_values::{IntervalSum, PgInterval, parse_interval};
+/// use sql_values::postgres::{IntervalSum, PgInterval, parse_interval};
 ///
 /// let mut total = IntervalSum::default();
 /// for text in ["1 mon", "2 days", "-01:00:00"] {
@@ -594,7 +594,7 @@ impl IntervalSum {
     /// are, and how many are each infinity.
     ///
     /// ```
-    /// use sql_values::{IntervalSum, parse_interval};
+    /// use sql_values::postgres::{IntervalSum, parse_interval};
     ///
     /// let mut state = IntervalSum::seeded(Some(parse_interval("3 days").unwrap()), 2, 0, 0);
     /// assert_eq!(state.count(), 2);

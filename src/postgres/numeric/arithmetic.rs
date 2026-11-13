@@ -22,7 +22,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] for a sum beyond what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// let numeric = |text| PgNumeric::parse(text).unwrap();
     /// assert_eq!(numeric("1.50").checked_add(&numeric("2.250")).unwrap().to_string(), "3.750");
@@ -73,7 +73,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] for a product beyond what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::{NumericError, PgNumeric};
+    /// use sql_values::postgres::{NumericError, PgNumeric};
     ///
     /// let numeric = |text| PgNumeric::parse(text).unwrap();
     /// assert_eq!(numeric("1.5").checked_mul(&numeric("2.25")).unwrap().to_string(), "3.375");
@@ -105,7 +105,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] for a quotient beyond what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::{NumericError, PgNumeric};
+    /// use sql_values::postgres::{NumericError, PgNumeric};
     ///
     /// let numeric = |text| PgNumeric::parse(text).unwrap();
     /// let third = numeric("10").checked_div(&numeric("3")).unwrap();
@@ -144,7 +144,7 @@ impl PgNumeric {
     /// [`NumericError::DivisionByZero`] for a divisor of zero.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// let numeric = |text| PgNumeric::parse(text).unwrap();
     /// assert_eq!(numeric("-7.5").checked_rem(&numeric("2")).unwrap().to_string(), "-1.5");
@@ -180,7 +180,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] where rounding up carries past what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// let numeric = |text| PgNumeric::parse(text).unwrap();
     /// assert_eq!(numeric("-2.5").round(0).unwrap().to_string(), "-3");
@@ -201,7 +201,7 @@ impl PgNumeric {
     /// `trunc(numeric)` is a scale of `0`. `NaN` and the infinities are left as they are.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// assert_eq!(PgNumeric::parse("-1.99").unwrap().trunc(1).to_string(), "-1.9");
     /// ```
@@ -222,7 +222,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] where the step down carries past what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// assert_eq!(PgNumeric::parse("-0.5").unwrap().floor().unwrap().to_string(), "-1");
     /// ```
@@ -238,7 +238,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] where the step up carries past what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// assert_eq!(PgNumeric::parse("-0.5").unwrap().ceil().unwrap().to_string(), "0");
     /// ```

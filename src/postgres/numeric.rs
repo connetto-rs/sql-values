@@ -12,13 +12,13 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use crate::cast::{CastError, is_pg_space};
+use super::cast::{CastError, is_pg_space};
 use magnitude::Magnitude;
 
 /// Why PostgreSQL refuses to read or compute a `numeric`, one variant per message it raises.
 ///
 /// ```
-/// use sql_values::{NumericError, PgNumeric};
+/// use sql_values::postgres::{NumericError, PgNumeric};
 ///
 /// assert_eq!(PgNumeric::parse("1.5x"), Err(NumericError::InvalidInputSyntax));
 /// let one = PgNumeric::from(1);
@@ -56,7 +56,7 @@ const SCALE_RANGE: core::ops::RangeInclusive<i16> = -1000..=1000;
 /// Its [`Display`](fmt::Display) is `numeric_out`, so equal values can print differently.
 ///
 /// ```
-/// use sql_values::PgNumeric;
+/// use sql_values::postgres::PgNumeric;
 ///
 /// let numeric = |text| PgNumeric::parse(text).unwrap();
 /// assert_eq!(numeric("1.50"), numeric("1.5"));
@@ -101,7 +101,7 @@ impl NumericTypmod {
     /// `-1000..=1000`. `numeric(p)` is a scale of `0`.
     ///
     /// ```
-    /// use sql_values::NumericTypmod;
+    /// use sql_values::postgres::NumericTypmod;
     ///
     /// assert!(NumericTypmod::new(4, 1).is_some());
     /// assert!(NumericTypmod::new(2, -3).is_some());
@@ -133,7 +133,7 @@ impl PgNumeric {
     /// [`NumericError::FormatOverflow`] for a value beyond what PostgreSQL stores.
     ///
     /// ```
-    /// use sql_values::{NumericError, PgNumeric};
+    /// use sql_values::postgres::{NumericError, PgNumeric};
     ///
     /// assert_eq!(PgNumeric::parse(" -1_000.50 ").unwrap().to_string(), "-1000.50");
     /// assert_eq!(PgNumeric::parse("0x1F").unwrap().to_string(), "31");
@@ -218,7 +218,7 @@ impl PgNumeric {
     /// Whether the value is a finite whole number, at any display scale.
     ///
     /// ```
-    /// use sql_values::PgNumeric;
+    /// use sql_values::postgres::PgNumeric;
     ///
     /// assert!(PgNumeric::parse("2.00").unwrap().is_integral());
     /// assert!(!PgNumeric::parse("2.5").unwrap().is_integral());

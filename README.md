@@ -11,8 +11,11 @@
 
 ```rust
 use sql_values::{
-    CastTarget, InputContext, IntervalError, Literal, PgNumeric, PgTimeZone, PgTimestampTz,
-    cast_literal, parse_bool, parse_interval, parse_timestamp,
+    parse_bool,
+    postgres::{
+        CastTarget, InputContext, IntervalError, Literal, PgNumeric, PgTimeZone, PgTimestampTz,
+        cast_literal, parse_interval, parse_timestamp,
+    },
 };
 
 assert_eq!(parse_bool("t"), Some(true));

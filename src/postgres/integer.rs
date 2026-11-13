@@ -2,12 +2,12 @@
 
 use core::ops::RangeInclusive;
 
-use crate::cast::{CastError, CastTarget, CastValue, PgType};
+use super::cast::{CastError, CastTarget, CastValue, PgType};
 
 /// A PostgreSQL integer type, ordered from the narrowest to the widest.
 ///
 /// ```
-/// use sql_values::{CastError, CastTarget, CastValue, IntegerType, PgType, cast_value};
+/// use sql_values::postgres::{CastError, CastTarget, CastValue, IntegerType, PgType, cast_value};
 ///
 /// assert_eq!(IntegerType::Smallint.range(), -32_768..=32_767);
 /// assert_eq!(IntegerType::Smallint.wider(IntegerType::Integer), IntegerType::Integer);

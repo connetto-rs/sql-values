@@ -5,7 +5,7 @@
 use alloc::string::{String, ToString};
 use core::fmt;
 
-use crate::{
+use super::{
     bpchar::PgBpchar,
     datetime::{DateTimeError, InputContext, PgDate, PgTimestamp, PgTimestampTz},
     integer::IntegerType,
@@ -62,7 +62,7 @@ impl CharLength {
     /// The length PostgreSQL accepts in `varchar(n)` and `char(n)`, from 1 to 10485760.
     ///
     /// ```
-    /// use sql_values::CharLength;
+    /// use sql_values::postgres::CharLength;
     ///
     /// assert!(CharLength::new(1).is_some());
     /// assert!(CharLength::new(0).is_none());
@@ -79,7 +79,7 @@ impl CharLength {
 /// A type PostgreSQL names in a cast's error, printed as `format_type` names it.
 ///
 /// ```
-/// use sql_values::{DateTimeError, PgType};
+/// use sql_values::postgres::{DateTimeError, PgType};
 ///
 /// assert_eq!(PgType::Time.to_string(), "time without time zone");
 /// // `time_in` names the type `time` in its syntax error.
@@ -287,7 +287,9 @@ pub enum CastError {
 /// crate does not model.
 ///
 /// ```
-/// use sql_values::{CastError, CastTarget, CharLength, Literal, NumericTypmod, PgType, cast_literal};
+/// use sql_values::postgres::{
+///     CastError, CastTarget, CharLength, Literal, NumericTypmod, PgType, cast_literal,
+/// };
 ///
 /// let cast = |literal, target| cast_literal(literal, target).map(|value| value.to_string());
 /// let length = |n| CharLength::new(n);
@@ -355,7 +357,7 @@ pub fn cast_literal(literal: Literal<'_>, target: CastTarget) -> Result<CastValu
 /// `numeric_in` raises for a `numeric` PostgreSQL cannot store.
 ///
 /// ```
-/// use sql_values::{CastValue, number_constant};
+/// use sql_values::postgres::{CastValue, number_constant};
 ///
 /// assert_eq!(number_constant("2147483647"), Ok(CastValue::Integer(i32::MAX)));
 /// assert_eq!(number_constant("2147483648"), Ok(CastValue::Bigint(2_147_483_648)));
@@ -391,7 +393,7 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 /// the session's `TimeZone` decides, or a text the target's input function is not modelled for.
 ///
 /// ```
-/// use sql_values::{CastError, CastTarget, CastValue, PgNumeric, PgType, cast_value};
+/// use sql_values::postgres::{CastError, CastTarget, CastValue, PgNumeric, PgType, cast_value};
 ///
 /// let cast = |value, target| cast_value(value, target).map(|value| value.to_string());
 ///

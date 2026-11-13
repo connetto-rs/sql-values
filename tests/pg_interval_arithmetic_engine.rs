@@ -13,8 +13,11 @@ mod postgres;
 use answers::{Answer, compare, quoted};
 use diesel::{PgConnection, prelude::*};
 use sql_values::{
-    InputContext, IntervalSum, PgInterval, PgTimeZone, PgTimestampTz, ShiftError, parse_f64,
-    parse_interval, parse_time, parse_timestamp,
+    parse_f64,
+    postgres::{
+        InputContext, IntervalSum, PgInterval, PgTimeZone, PgTimestampTz, ShiftError,
+        parse_interval, parse_time, parse_timestamp,
+    },
 };
 
 static PG18: postgres::Slot = exit_slot::ExitSlot::new();

@@ -1,8 +1,8 @@
 use diesel::prelude::*;
 use diesel::sql_types::Text;
 use sql_values::{
-    PgDate, PgTime, PgTimestamp, parse_bool, parse_date, parse_f64, parse_i64, parse_time,
-    parse_timestamp,
+    parse_bool, parse_f64, parse_i64,
+    postgres::{PgDate, PgTime, PgTimestamp, parse_date, parse_time, parse_timestamp},
 };
 
 diesel::table! {

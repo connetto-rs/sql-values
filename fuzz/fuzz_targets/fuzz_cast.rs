@@ -1,7 +1,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sql_values::{CastTarget, CastValue, CharLength, Literal, NumericTypmod, cast_literal};
+use sql_values::postgres::{
+    CastTarget, CastValue, CharLength, Literal, NumericTypmod, cast_literal,
+};
 
 /// The `varchar(n)` and `char(n)` length the input's length picks.
 fn char_length(len: usize) -> usize {
