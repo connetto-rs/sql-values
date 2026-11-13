@@ -51,6 +51,10 @@ pub enum Float8Error {
 /// assert_eq!(float8("-0"), float8("0"));
 /// assert!(float8("NaN") > float8("Infinity"));
 /// assert_eq!(PgFloat8::from(2.5).to_string(), "2.5");
+///
+/// let distinct: std::collections::HashSet<_> =
+///     ["0", "-0", "1", "1.0", "NaN", "-nan"].map(|text| float8(text)).into_iter().collect();
+/// assert_eq!(distinct.len(), 3);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct PgFloat8(f64);
@@ -108,24 +112,125 @@ impl fmt::Display for PgFloat8 {
         if value == 0.0 {
             return f.write_str("0");
         }
-        // Rust's shortest round-trip digits are Ryu's: the fewest that read back, the closest
-        // among them, with the halfway bounds inclusive for an even significand.
-        let mut shortest = StackText::default();
-        fmt::Write::write_fmt(&mut shortest, format_args!("{:e}", value.abs()))?;
-        let (significand, exponent) = shortest
-            .as_str()
-            .split_once('e')
-            .expect("exponential notation has an exponent");
-        let exponent: i32 = exponent.parse().expect("the exponent is an integer");
-        let mut digits = StackText::default();
-        for digit in significand.chars().filter(|&c| c != '.') {
-            fmt::Write::write_char(&mut digits, digit)?;
-        }
-        write_decimal(f, digits.as_str(), exponent)
+        let (digits, last_power) = shortest(value.abs());
+        let mut text = StackText::default();
+        fmt::Write::write_fmt(&mut text, format_args!("{digits}"))?;
+        let length = i32::try_from(text.length).expect("a u64 has at most 20 digits");
+        write_decimal(f, text.as_str(), last_power + length - 1)
     }
 }
 
-/// ASCII text of at most 32 bytes, room for a double's shortest exponential form.
+/// The decimal `float8out` prints for a positive finite nonzero `value`, as digits and the power
+/// of ten of the last. PostgreSQL's Ryu takes the fewest digits strictly between the midpoints to
+/// the neighbouring doubles, never a midpoint itself, and among those the one nearest `value`
+/// (ties to even). The fewest digits never end in a zero, which a shorter spelling would drop.
+fn shortest(value: f64) -> (u64, i32) {
+    // Rust's shortest form also accepts a midpoint, so no spelling with fewer digits exists.
+    let fewest = decimal(value, None).0.ilog10() + 1;
+    let found = (fewest..=17).find_map(|count| {
+        let nearest = decimal(value, Some(count));
+        [nearest, next(nearest, count), previous(nearest, count)]
+            .into_iter()
+            .find(|&candidate| strictly_between_midpoints(value, candidate))
+    });
+    found.expect("17 digits always fit strictly between the midpoints")
+}
+
+/// `value` as Rust spells it in exponential notation, the shortest form that reads back when
+/// `count` is `None`, else rounded to `count` significant digits with ties to even, as digits
+/// and the power of ten of the last.
+fn decimal(value: f64, count: Option<u32>) -> (u64, i32) {
+    let mut text = StackText::default();
+    let written = match count {
+        Some(count) => {
+            let fraction = usize::try_from(count - 1).expect("at most 16 fraction digits");
+            fmt::Write::write_fmt(&mut text, format_args!("{value:.fraction$e}"))
+        }
+        None => fmt::Write::write_fmt(&mut text, format_args!("{value:e}")),
+    };
+    written.expect("a double's exponential form fits 32 bytes");
+    let (significand, exponent) = text
+        .as_str()
+        .split_once('e')
+        .expect("an exponent is written");
+    let exponent: i32 = exponent.parse().expect("the exponent is an integer");
+    let (mut digits, mut fraction_digits) = (0_u64, 0);
+    for (index, digit) in significand.bytes().filter(u8::is_ascii_digit).enumerate() {
+        digits = digits * 10 + u64::from(digit - b'0');
+        fraction_digits = index;
+    }
+    let fraction_digits = i32::try_from(fraction_digits).expect("at most 16 fraction digits");
+    (digits, exponent - fraction_digits)
+}
+
+/// The `count`-digit decimal one unit above `(digits, last_power)`.
+fn next((digits, last_power): (u64, i32), count: u32) -> (u64, i32) {
+    if digits + 1 == 10_u64.pow(count) {
+        (10_u64.pow(count - 1), last_power + 1)
+    } else {
+        (digits + 1, last_power)
+    }
+}
+
+/// The `count`-digit decimal one unit below `(digits, last_power)`.
+fn previous((digits, last_power): (u64, i32), count: u32) -> (u64, i32) {
+    if digits == 10_u64.pow(count - 1) {
+        (10_u64.pow(count) - 1, last_power - 1)
+    } else {
+        (digits - 1, last_power)
+    }
+}
+
+/// Whether the decimal reads back to `value` without lying on a midpoint to a neighbour.
+fn strictly_between_midpoints(value: f64, (digits, last_power): (u64, i32)) -> bool {
+    let mut text = StackText::default();
+    fmt::Write::write_fmt(&mut text, format_args!("{digits}e{last_power}"))
+        .expect("a decimal of at most 17 digits fits 32 bytes");
+    let reads_back = text.as_str().parse::<f64>() == Ok(value);
+    let bits = value.to_bits();
+    let (fraction, biased) = (bits & ((1 << 52) - 1), (bits >> 52) & 0x7ff);
+    // `value` is `significand * 2^power`, and a midpoint is an odd multiple of a lower power.
+    let (significand, power) = if biased == 0 {
+        (fraction, -1074)
+    } else {
+        let biased = i32::try_from(biased).expect("an 11-bit exponent");
+        (fraction | 1 << 52, biased - 1075)
+    };
+    let above = (2 * significand + 1, power - 1);
+    // The gap below a power of two is half the gap above it.
+    let below = if fraction == 0 && biased > 1 {
+        (4 * significand - 1, power - 2)
+    } else {
+        (2 * significand - 1, power - 1)
+    };
+    reads_back
+        && !equals_dyadic((digits, last_power), above)
+        && !equals_dyadic((digits, last_power), below)
+}
+
+/// Whether `digits * 10^last_power` equals `odd * 2^power`, comparing the parts of each that
+/// are prime to ten and their powers of two and of five.
+fn equals_dyadic((digits, last_power): (u64, i32), (odd, power): (u64, i32)) -> bool {
+    let (digits, twos, digit_fives) = split_two_five(digits);
+    let (odd, _, odd_fives) = split_two_five(odd);
+    digits == odd && twos + last_power == power && digit_fives + last_power == odd_fives
+}
+
+/// `value` as `rest * 2^twos * 5^fives` with `rest` prime to ten.
+fn split_two_five(mut value: u64) -> (u64, i32, i32) {
+    let (mut twos, mut fives) = (0, 0);
+    while value.is_multiple_of(2) {
+        value /= 2;
+        twos += 1;
+    }
+    while value.is_multiple_of(5) {
+        value /= 5;
+        fives += 1;
+    }
+    (value, twos, fives)
+}
+
+/// ASCII text of at most 32 bytes, room for any decimal this module writes.
 #[derive(Default)]
 struct StackText {
     bytes: [u8; 32],
@@ -141,10 +246,8 @@ impl StackText {
 impl fmt::Write for StackText {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         let end = self.length + text.len();
-        self.bytes
-            .get_mut(self.length..end)
-            .ok_or(fmt::Error)?
-            .copy_from_slice(text.as_bytes());
+        let slot = self.bytes.get_mut(self.length..end).ok_or(fmt::Error)?;
+        slot.copy_from_slice(text.as_bytes());
         self.length = end;
         Ok(())
     }
