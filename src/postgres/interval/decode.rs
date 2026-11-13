@@ -937,33 +937,43 @@ fn strtod_hex(text: &[u8], start: usize) -> Option<(f64, usize, bool)> {
 
 /// `mantissa * 2^exponent`, rounded to a double the way `strtod` rounds:
 /// to nearest, ties to even, with `sticky` standing for bits below the
-/// mantissa.
+/// mantissa. The rounding happens once, at the precision the result's own
+/// exponent leaves, so a subnormal is never rounded twice.
 fn hex_to_f64(mantissa: u64, exponent: i64, sticky: bool) -> f64 {
-    let width = 64 - mantissa.leading_zeros();
-    let (mut significand, mut scale) = if width > 53 {
-        let excess = width - 53;
-        let kept = mantissa >> excess;
-        let dropped = mantissa & ((1_u64 << excess) - 1);
-        let half = 1_u64 << (excess - 1);
-        let round_up = dropped > half || (dropped == half && (sticky || kept & 1 == 1));
-        // A `p` exponent near the end of `i64` saturates, since any such scale overflows or
-        // underflows a double alike.
-        (
-            kept + u64::from(round_up),
-            exponent.saturating_add(i64::from(excess)),
-        )
+    let width = i64::from(64 - mantissa.leading_zeros());
+    // A `p` exponent near the end of `i64` saturates, since any such scale overflows or
+    // underflows a double alike.
+    let top = exponent.saturating_add(width - 1);
+    // The bits a double keeps at this magnitude, fewer below 2^-1022, none below 2^-1075.
+    let precision = if top >= -1022 {
+        53
+    } else {
+        top.saturating_add(1075)
+    };
+    let excess = width.saturating_sub(precision);
+    let (significand, scale) = if excess > 0 {
+        // Beyond 64 dropped bits nothing is kept, and beyond 65 the half lies above them all.
+        let (kept, dropped) = match u32::try_from(excess) {
+            Ok(shift) if shift < 64 => (mantissa >> shift, mantissa & ((1 << shift) - 1)),
+            _ => (0, mantissa),
+        };
+        let round_up = match u32::try_from(excess - 1) {
+            Ok(shift) if shift < 64 => {
+                let half = 1_u64 << shift;
+                dropped > half || (dropped == half && (sticky || kept & 1 == 1))
+            }
+            _ => false,
+        };
+        (kept + u64::from(round_up), exponent.saturating_add(excess))
     } else {
         (mantissa, exponent)
     };
-    if significand >> 53 != 0 {
-        significand >>= 1;
-        scale = scale.saturating_add(1);
-    }
     debug_assert!(
-        significand >> 53 == 0,
+        significand >> 53 == 0 || significand == 1 << 53,
         "the significand was rounded to 53 bits"
     );
-    // Lossless, since the assertion above bounds the significand to 53 bits.
+    // Lossless, since a significand of at most 2^53 is a double, and every halving or doubling
+    // below stays on the grid of doubles the rounding above aimed at.
     let mut value = significand as f64;
     let mut remaining = scale;
     while remaining > 0 {
