@@ -1,4 +1,4 @@
-use sql_values::PgTime;
+use sql_values::postgres::PgTime;
 
 /// Every accepted spelling of `time`: nine fraction digits, six, and the shortest.
 pub fn time_spellings(time: PgTime) -> Vec<String> {

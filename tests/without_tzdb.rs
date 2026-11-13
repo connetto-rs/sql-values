@@ -2,7 +2,7 @@
 //! does, so only `GMT`, fixed offsets and POSIX specifications load.
 #![cfg(not(feature = "tzdb"))]
 
-use sql_values::{InputContext, PgTimeZone, PgTimestampTz, TimeZoneError};
+use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz, TimeZoneError};
 
 #[test]
 fn named_zones_are_refused_without_the_database() {

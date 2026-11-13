@@ -17,7 +17,7 @@ use core::{
 /// the `text` exactly.
 ///
 /// ```
-/// use sql_values::PgBpchar;
+/// use sql_values::postgres::PgBpchar;
 ///
 /// let row = PgBpchar::new("ab  ");
 /// assert_eq!(row, PgBpchar::new("ab"));

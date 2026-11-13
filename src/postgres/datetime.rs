@@ -15,7 +15,7 @@ pub use arithmetic::DateArithmeticError;
 pub use decode::DateOrder;
 pub use input::{InputContext, parse_date, parse_time, parse_timestamp, parse_timestamp_tz};
 
-use crate::{PgTimeZone, PgType};
+use super::{PgTimeZone, PgType};
 
 pub(crate) const USECS_PER_SEC: i64 = 1_000_000;
 pub(crate) const USECS_PER_MINUTE: i64 = 60_000_000;
@@ -83,7 +83,7 @@ pub enum DateTimeError {
 /// infinities, ordered as PostgreSQL orders it.
 ///
 /// ```
-/// use sql_values::{InputContext, PgDate};
+/// use sql_values::postgres::{InputContext, PgDate};
 ///
 /// let leap = PgDate::from_ymd(2024, 2, 29).unwrap();
 /// assert_eq!(leap.to_string(), "2024-02-29");
@@ -103,7 +103,7 @@ pub struct PgDate(i32);
 /// A PostgreSQL `time`, microseconds from midnight to 24:00:00 inclusive.
 ///
 /// ```
-/// use sql_values::PgTime;
+/// use sql_values::postgres::PgTime;
 ///
 /// let noon = PgTime::from_hms_micro(12, 0, 0, 500_000).unwrap();
 /// assert_eq!(noon.to_string(), "12:00:00.5");
@@ -121,7 +121,7 @@ pub struct PgTime(i64);
 /// ordered by the instant and then by the offset, as `timetz_cmp` orders it.
 ///
 /// ```
-/// use sql_values::{PgTime, PgTimeTz};
+/// use sql_values::postgres::{PgTime, PgTimeTz};
 ///
 /// let noon = PgTime::from_hms_micro(12, 0, 0, 0).unwrap();
 /// let rome = PgTimeTz::new(noon, 3_600).unwrap();
@@ -143,7 +143,7 @@ pub struct PgTimeTz {
 /// 294276-12-31 23:59:59.999999 and the two infinities.
 ///
 /// ```
-/// use sql_values::{InputContext, PgTimestamp};
+/// use sql_values::postgres::{InputContext, PgTimestamp};
 ///
 /// let last = PgTimestamp::parse("294276-12-31 23:59:59.999999", InputContext::new()).unwrap();
 /// assert_eq!(last.to_string(), "294276-12-31 23:59:59.999999");
@@ -162,7 +162,7 @@ pub struct PgTimestamp(i64);
 /// range of [`PgTimestamp`], printed as under `TimeZone` `UTC`.
 ///
 /// ```
-/// use sql_values::{InputContext, PgTimestampTz};
+/// use sql_values::postgres::{InputContext, PgTimestampTz};
 ///
 /// let at = PgTimestampTz::parse("2026-03-29 12:00:00+02", InputContext::new()).unwrap();
 /// assert_eq!(at.to_string(), "2026-03-29 10:00:00+00");
@@ -221,7 +221,7 @@ impl PgDate {
     /// The year, month and day, where year `Y` BC is year `1 - Y`, or `None` for an infinity.
     ///
     /// ```
-    /// use sql_values::PgDate;
+    /// use sql_values::postgres::PgDate;
     ///
     /// assert_eq!(PgDate::from_pg_days(0).unwrap().ymd(), Some((2000, 1, 1)));
     /// assert_eq!(PgDate::INFINITY.ymd(), None);
@@ -273,7 +273,7 @@ impl PgTime {
     /// The hour, minute, second and microsecond, where 24:00:00 is hour 24.
     ///
     /// ```
-    /// use sql_values::PgTime;
+    /// use sql_values::postgres::PgTime;
     ///
     /// let t = PgTime::from_micros(45_296_000_007).unwrap();
     /// assert_eq!(t.hms_micro(), (12, 34, 56, 7));
@@ -358,7 +358,7 @@ impl PgTimestamp {
     /// or `None` for an infinite date or outside PostgreSQL's range.
     ///
     /// ```
-    /// use sql_values::{PgDate, PgTime, PgTimestamp};
+    /// use sql_values::postgres::{PgDate, PgTime, PgTimestamp};
     ///
     /// let date = PgDate::from_ymd(2024, 12, 31).unwrap();
     /// let at = PgTimestamp::new(date, PgTime::from_micros(86_400_000_000).unwrap()).unwrap();
@@ -425,7 +425,7 @@ impl PgTimestamp {
     /// jiff's years.
     ///
     /// ```
-    /// use sql_values::{InputContext, PgTimeZone, PgTimestamp};
+    /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestamp};
     ///
     /// #[cfg(feature = "tzdb")]
     /// {
@@ -492,7 +492,7 @@ impl PgTimestampTz {
     /// outside jiff's years.
     ///
     /// ```
-    /// use sql_values::{InputContext, PgTimeZone, PgTimestampTz};
+    /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz};
     ///
     /// #[cfg(feature = "tzdb")]
     /// {

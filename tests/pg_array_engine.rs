@@ -18,7 +18,7 @@ use std::{
 
 use diesel::PgConnection;
 use pg18::{connect, pg_order, pg_text, quoted};
-use sql_values::{
+use sql_values::postgres::{
     ArrayDim, CastError, CastTarget, CharLength, InputContext, NumericTypmod, PgArray, PgDate,
     PgTimestamp, PgValue,
 };

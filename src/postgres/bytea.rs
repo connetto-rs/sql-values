@@ -7,7 +7,7 @@ use core::fmt;
 /// Why `byteain` refuses a text, one variant per message it raises.
 ///
 /// ```
-/// use sql_values::{ByteaError, PgBytea};
+/// use sql_values::postgres::{ByteaError, PgBytea};
 ///
 /// assert_eq!(PgBytea::parse(r"\x0"), Err(ByteaError::OddHexDigits));
 /// assert_eq!(PgBytea::parse(r"\x0g"), Err(ByteaError::InvalidHexDigit('g')));
@@ -30,7 +30,7 @@ pub enum ByteaError {
 /// under the default `bytea_output` of `hex`.
 ///
 /// ```
-/// use sql_values::PgBytea;
+/// use sql_values::postgres::PgBytea;
 ///
 /// let bytea = |text| PgBytea::parse(text).unwrap();
 /// assert_eq!(bytea(r"\x de AD "), bytea(r"\336\255"));

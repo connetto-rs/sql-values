@@ -1,8 +1,8 @@
 use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sql_values::{
-    parse_bool, parse_date, parse_f64, parse_i64, parse_interval, parse_pg_bytea_hex, parse_time,
-    parse_timestamp, parse_timestamp_tz,
+    parse_bool, parse_f64, parse_i64, parse_pg_bytea_hex,
+    postgres::{parse_date, parse_interval, parse_time, parse_timestamp, parse_timestamp_tz},
 };
 
 #[cfg(feature = "decimal")]

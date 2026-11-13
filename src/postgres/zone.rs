@@ -23,7 +23,7 @@ use tznames::Abbreviation;
 pub(crate) use tznames::Meaning;
 pub use tznames::TimeZoneAbbreviationsError;
 
-use crate::{
+use super::{
     DateTimeError, IntervalError,
     datetime::{date2j, days_in_month, j2date},
     interval::strtod,
@@ -49,7 +49,7 @@ const ABBREVIATION_SCAN_END: i64 = 7_258_118_400;
 /// A `timezone_abbreviations` set, the abbreviations a literal may write for its zone.
 ///
 /// ```
-/// use sql_values::{TimeZoneAbbreviations, TimeZoneAbbreviationsError};
+/// use sql_values::postgres::{TimeZoneAbbreviations, TimeZoneAbbreviationsError};
 ///
 /// let local = |name: &str| Some(match name {
 ///     "Local" => "@INCLUDE Default\n@OVERRIDE\nIST 19800 # India\n",
@@ -186,7 +186,7 @@ pub enum TimeZoneError {
 /// names both alike.
 ///
 /// ```
-/// use sql_values::{PgTimeZone, TimeZoneError};
+/// use sql_values::postgres::{PgTimeZone, TimeZoneError};
 ///
 /// #[cfg(feature = "tzdb")]
 /// assert_eq!(PgTimeZone::parse("europe/rome").unwrap().name(), "Europe/Rome");
@@ -542,7 +542,7 @@ fn strtod_whole(text: &str) -> Option<f64> {
     let bytes = text.as_bytes();
     let mut at = bytes
         .iter()
-        .take_while(|&&b| crate::cast::is_pg_space(b))
+        .take_while(|&&b| super::cast::is_pg_space(b))
         .count();
     if bytes.get(at) == Some(&b'+') {
         at += 1;
@@ -565,7 +565,7 @@ impl PgTimeZone {
     /// The [`TimeZoneError`] PostgreSQL raises.
     ///
     /// ```
-    /// use sql_values::PgTimeZone;
+    /// use sql_values::postgres::PgTimeZone;
     ///
     /// let name = |setting| PgTimeZone::parse(setting).map(|zone| zone.to_string());
     /// assert_eq!(name("2.5").unwrap(), "<+02:30>-02:30");
@@ -580,7 +580,7 @@ impl PgTimeZone {
         {
             let blanks = setting.as_bytes()[8..]
                 .iter()
-                .take_while(|&&b| crate::cast::is_pg_space(b))
+                .take_while(|&&b| super::cast::is_pg_space(b))
                 .count();
             let body = setting[8 + blanks..]
                 .strip_prefix('\'')
@@ -604,7 +604,7 @@ impl PgTimeZone {
             if !west.is_finite() || west.abs() >= limit {
                 return Err(TimeZoneError::OffsetOutOfRange);
             }
-            return Self::from_offset_west(crate::float::truncate_to_i64(west));
+            return Self::from_offset_west(super::float::truncate_to_i64(west));
         }
         let zone = Self::load(setting).ok_or(TimeZoneError::InvalidValue)?;
         if zone
@@ -714,7 +714,7 @@ impl PgTimeZone {
     /// `+05:30` is five and a half hours behind it.
     ///
     /// ```
-    /// use sql_values::PgTimeZone;
+    /// use sql_values::postgres::PgTimeZone;
     ///
     /// let offset = |setting| PgTimeZone::parse(setting).unwrap().fixed_offset();
     /// #[cfg(feature = "tzdb")]

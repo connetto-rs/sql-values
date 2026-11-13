@@ -7,7 +7,7 @@ extern crate alloc;
     dead_code,
     reason = "the build script reads the files and leaves the lookup to the library"
 )]
-#[path = "src/zone/tznames.rs"]
+#[path = "src/postgres/zone/tznames.rs"]
 mod tznames;
 
 use core::fmt::Write as _;
@@ -19,9 +19,9 @@ use tznames::Meaning;
 const SETS: &[&str] = &["Default", "Australia", "India"];
 
 fn main() {
-    let directory = Path::new("src/zone/timezonesets");
-    println!("cargo::rerun-if-changed=src/zone/timezonesets");
-    println!("cargo::rerun-if-changed=src/zone/tznames.rs");
+    let directory = Path::new("src/postgres/zone/timezonesets");
+    println!("cargo::rerun-if-changed=src/postgres/zone/timezonesets");
+    println!("cargo::rerun-if-changed=src/postgres/zone/tznames.rs");
     let texts: Vec<(&str, String)> = SETS
         .iter()
         .map(|&name| {

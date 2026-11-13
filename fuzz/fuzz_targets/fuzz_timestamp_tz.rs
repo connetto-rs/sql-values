@@ -6,7 +6,7 @@ mod date_spellings;
 mod time_spellings;
 
 use libfuzzer_sys::fuzz_target;
-use sql_values::{parse_timestamp, parse_timestamp_tz, PgTimestamp};
+use sql_values::postgres::{PgTimestamp, parse_timestamp, parse_timestamp_tz};
 
 /// Zero, whole-hour, half-hour and local-mean-time offsets, the last as PostgreSQL prints it.
 const OFFSETS: [i32; 5] = [

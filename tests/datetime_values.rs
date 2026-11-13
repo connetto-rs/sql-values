@@ -2,7 +2,9 @@
 
 use std::collections::HashSet;
 
-use sql_values::{DateTimeError, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp, PgTimestampTz};
+use sql_values::postgres::{
+    DateTimeError, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp, PgTimestampTz,
+};
 
 /// 4714-11-24 BC and 5874897-12-31, in days from 2000-01-01.
 const FIRST_DAY: i32 = -2_451_545;

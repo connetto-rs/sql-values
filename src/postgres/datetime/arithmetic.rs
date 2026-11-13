@@ -30,7 +30,7 @@ impl PgDate {
     /// 5874898-01-01.
     ///
     /// ```
-    /// use sql_values::{DateArithmeticError, PgDate};
+    /// use sql_values::postgres::{DateArithmeticError, PgDate};
     ///
     /// let date = PgDate::from_ymd(2026, 1, 31).unwrap();
     /// assert_eq!(date.checked_add_days(1).unwrap().to_string(), "2026-02-01");
@@ -49,7 +49,7 @@ impl PgDate {
     /// 5874898-01-01.
     ///
     /// ```
-    /// use sql_values::{DateArithmeticError, PgDate};
+    /// use sql_values::postgres::{DateArithmeticError, PgDate};
     ///
     /// let first = PgDate::from_ymd(-4713, 11, 24).unwrap();
     /// assert_eq!(first.checked_sub_days(1), Err(DateArithmeticError::DateOutOfRange));
@@ -65,7 +65,7 @@ impl PgDate {
     /// [`DateArithmeticError::CannotSubtractInfiniteDates`] when either date is infinite.
     ///
     /// ```
-    /// use sql_values::PgDate;
+    /// use sql_values::postgres::PgDate;
     ///
     /// let march = PgDate::from_ymd(2026, 3, 1).unwrap();
     /// let january = PgDate::from_ymd(2026, 1, 1).unwrap();
@@ -89,7 +89,7 @@ impl PgDate {
     /// [`DateArithmeticError::DateOutOfRangeForTimestamp`] for a date from 294277-01-01.
     ///
     /// ```
-    /// use sql_values::{DateArithmeticError, PgDate, PgTimestamp};
+    /// use sql_values::postgres::{DateArithmeticError, PgDate, PgTimestamp};
     ///
     /// let date = PgDate::from_ymd(2026, 1, 1).unwrap();
     /// assert_eq!(date.to_timestamp().unwrap().to_string(), "2026-01-01 00:00:00");
@@ -114,7 +114,7 @@ impl PgDate {
     ///
     /// ```
     /// use core::cmp::Ordering;
-    /// use sql_values::{InputContext, PgDate, PgTimestamp};
+    /// use sql_values::postgres::{InputContext, PgDate, PgTimestamp};
     ///
     /// let date = PgDate::from_ymd(2026, 1, 1).unwrap();
     /// let morning = PgTimestamp::parse("2026-01-01 10:00", InputContext::new()).unwrap();

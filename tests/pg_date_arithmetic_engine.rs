@@ -11,7 +11,9 @@ mod exit_slot;
 mod postgres;
 
 use answers::{Answer, compare, quoted};
-use sql_values::{CastTarget, CastValue, InputContext, Literal, PgDate, PgTimestamp, cast_literal};
+use sql_values::postgres::{
+    CastTarget, CastValue, InputContext, Literal, PgDate, PgTimestamp, cast_literal,
+};
 
 static PG18: postgres::Slot = exit_slot::ExitSlot::new();
 

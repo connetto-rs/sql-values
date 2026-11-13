@@ -9,7 +9,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use crate::{
+use super::{
     array::PgArray,
     cast::{CastError, CastValue},
     datetime::{PgDate, PgTimestamp},
@@ -35,7 +35,7 @@ use crate::{
 ///
 /// use alloc::collections::BTreeSet;
 ///
-/// use sql_values::{InputContext, PgDate, PgNumeric, PgTimestamp, PgValue};
+/// use sql_values::postgres::{InputContext, PgDate, PgNumeric, PgTimestamp, PgValue};
 ///
 /// let four = PgValue::Numeric(PgNumeric::parse("4.00").unwrap());
 /// assert_eq!(PgValue::Integer(4), four);
@@ -87,7 +87,7 @@ impl PgValue {
     /// [`CastError::OutOfRange`] for an integer outside [`IntegerType::range`].
     ///
     /// ```
-    /// use sql_values::{CastError, CastValue, IntegerType, PgType, PgValue};
+    /// use sql_values::postgres::{CastError, CastValue, IntegerType, PgType, PgValue};
     ///
     /// let value = || PgValue::Integer(40_000);
     /// let held = value().into_cast_value(IntegerType::Integer);
@@ -142,7 +142,7 @@ impl PgValue {
     /// from 294277-01-01 has none of.
     ///
     /// ```
-    /// use sql_values::{PgDate, PgValue};
+    /// use sql_values::postgres::{PgDate, PgValue};
     ///
     /// let day = PgValue::Date(PgDate::from_ymd(2026, 1, 1).unwrap());
     /// assert_eq!(day.as_timestamp().unwrap().to_string(), "2026-01-01 00:00:00");
@@ -162,7 +162,7 @@ impl PgValue {
     /// `timestamp` or an array holding either, whose spelling `DateStyle` decides.
     ///
     /// ```
-    /// use sql_values::{PgDate, PgValue};
+    /// use sql_values::postgres::{PgDate, PgValue};
     ///
     /// let flag = PgValue::Boolean(false);
     /// assert_eq!(flag.output().map(|output| output.to_string()).as_deref(), Some("f"));

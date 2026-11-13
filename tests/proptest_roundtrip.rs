@@ -1,8 +1,11 @@
 use core::fmt::Write as _;
 use proptest::prelude::*;
 use sql_values::{
-    PgDate, PgInterval, PgTime, PgTimestamp, PgTimestampTz, parse_bool, parse_date, parse_f64,
-    parse_i64, parse_interval, parse_pg_bytea_hex, parse_time, parse_timestamp, parse_timestamp_tz,
+    parse_bool, parse_f64, parse_i64, parse_pg_bytea_hex,
+    postgres::{
+        PgDate, PgInterval, PgTime, PgTimestamp, PgTimestampTz, parse_date, parse_interval,
+        parse_time, parse_timestamp, parse_timestamp_tz,
+    },
 };
 use std::hash::BuildHasher as _;
 

@@ -9,9 +9,12 @@ mod postgres;
 
 use diesel::{dsl::sql, prelude::*, result::Error as DieselError, sql_types::Text};
 use sql_values::{
-    DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp,
-    PgTimestampTz, TimeZoneAbbreviations, parse_bool, parse_date, parse_f64, parse_i64,
-    parse_pg_bytea_hex, parse_time, parse_timestamp, parse_timestamp_tz,
+    parse_bool, parse_f64, parse_i64, parse_pg_bytea_hex,
+    postgres::{
+        DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp,
+        PgTimestampTz, TimeZoneAbbreviations, parse_date, parse_time, parse_timestamp,
+        parse_timestamp_tz,
+    },
 };
 
 /// One container per test binary, removed when the binary exits; a plain

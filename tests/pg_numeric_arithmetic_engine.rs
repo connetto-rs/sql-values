@@ -11,7 +11,7 @@ mod exit_slot;
 mod postgres;
 
 use answers::{Answer, compare, quoted};
-use sql_values::PgNumeric;
+use sql_values::postgres::PgNumeric;
 
 static PG18: postgres::Slot = exit_slot::ExitSlot::new();
 

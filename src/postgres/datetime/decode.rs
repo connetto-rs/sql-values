@@ -17,7 +17,7 @@ use super::{
     },
     utc_offset,
 };
-use crate::{PgTimeZone, zone::Meaning};
+use crate::postgres::{PgTimeZone, zone::Meaning};
 
 /// `HOURS_PER_DAY`.
 const HOURS_PER_DAY: i32 = 24;
@@ -59,7 +59,7 @@ impl From<BadFormat> for Dterr {
 
 impl Dterr {
     /// `DateTimeParseError`'s error for a literal of `pg_type`.
-    pub(crate) const fn for_type(self, pg_type: crate::PgType) -> DateTimeError {
+    pub(crate) const fn for_type(self, pg_type: crate::postgres::PgType) -> DateTimeError {
         match self {
             Self::BadFormat => DateTimeError::InvalidInputSyntax(pg_type),
             Self::FieldOverflow => DateTimeError::FieldValueOutOfRange,
@@ -605,8 +605,9 @@ fn julian_day(value: i32, fraction: &[u8], tm: &mut Tm) -> Result<u32, Dterr> {
     if !fraction.is_empty() {
         let fraction = parse_fraction(fraction)?;
         // C's conversion of the `double` to `int64` truncates.
-        let time =
-            crate::float::truncate_to_i64(fraction * crate::float::int_to_f64(USECS_PER_DAY));
+        let time = crate::postgres::float::truncate_to_i64(
+            fraction * crate::postgres::float::int_to_f64(USECS_PER_DAY),
+        );
         dt2time(time, tm);
         tmask |= DTK_TIME_M;
     }

@@ -4,7 +4,7 @@
 //! element by element.
 //!
 //! ```
-//! use sql_values::{ArrayDim, CastTarget, PgArray, PgValue};
+//! use sql_values::postgres::{ArrayDim, CastTarget, PgArray, PgValue};
 //!
 //! let array = PgArray::parse("{1,2,NULL}", CastTarget::Integer).unwrap();
 //! assert_eq!(array.to_string(), "{1,2,NULL}");
@@ -33,7 +33,7 @@ use core::{
     hash::{Hash, Hasher},
 };
 
-use crate::{
+use super::{
     cast::{CastError, CastTarget, CastValue, Literal, cast_literal, cast_value, is_pg_space},
     integer::IntegerType,
     value::PgValue,
@@ -54,7 +54,7 @@ impl ArrayDim {
     /// as `ArrayCheckBounds` refuses it, so the upper bound stays below `i32::MAX`.
     ///
     /// ```
-    /// use sql_values::ArrayDim;
+    /// use sql_values::postgres::ArrayDim;
     ///
     /// let dim = ArrayDim::new(-1, 3).unwrap();
     /// assert_eq!(dim.lower(), -1);
@@ -87,7 +87,7 @@ impl ArrayDim {
 /// default `DateStyle` of `ISO`.
 ///
 /// ```
-/// use sql_values::{ArrayDim, PgArray, PgValue};
+/// use sql_values::postgres::{ArrayDim, PgArray, PgValue};
 ///
 /// let array = PgArray::new(vec![Some(PgValue::Integer(1)), None]);
 /// assert_eq!(array.to_string(), "{1,NULL}");
@@ -105,7 +105,7 @@ impl PgArray {
     /// holds it.
     ///
     /// ```
-    /// use sql_values::{PgArray, PgValue};
+    /// use sql_values::postgres::{PgArray, PgValue};
     ///
     /// assert_eq!(PgArray::new(Vec::new()).to_string(), "{}");
     /// assert_eq!(
@@ -131,7 +131,7 @@ impl PgArray {
     /// an array.
     ///
     /// ```
-    /// use sql_values::{ArrayDim, PgArray, PgValue};
+    /// use sql_values::postgres::{ArrayDim, PgArray, PgValue};
     ///
     /// let array = PgArray::with_dims(
     ///     vec![ArrayDim::new(1, 2).unwrap(), ArrayDim::new(1, 2).unwrap()],
@@ -195,7 +195,7 @@ impl PgArray {
     /// from the text's `[l:u]` items or from the nesting.
     ///
     /// ```
-    /// use sql_values::{CastError, CastTarget, PgArray};
+    /// use sql_values::postgres::{CastError, CastTarget, PgArray};
     ///
     /// let array = PgArray::parse("[0:1]={1,2}", CastTarget::Integer).unwrap();
     /// assert_eq!(array.to_string(), "[0:1]={1,2}");
@@ -336,7 +336,7 @@ impl PgArray {
     /// and the dimensions kept.
     ///
     /// ```
-    /// use sql_values::{CastError, CastTarget, PgArray};
+    /// use sql_values::postgres::{CastError, CastTarget, PgArray};
     ///
     /// let array = PgArray::parse("{1.5}", CastTarget::Numeric(None)).unwrap();
     /// assert_eq!(array.cast(CastTarget::Integer).unwrap().to_string(), "{2}");
@@ -732,7 +732,7 @@ fn read_bounded(chars: &[char], at: &mut usize) -> Result<i32, CastError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cast::PgType;
+    use crate::postgres::cast::PgType;
 
     fn dim(lower: i32, length: u32) -> ArrayDim {
         ArrayDim::new(lower, length).expect("a bound")
@@ -1022,12 +1022,12 @@ mod tests {
             array.output().map(|output| output.to_string()).as_deref(),
             Some("{1,NULL}")
         );
-        let day = crate::datetime::PgDate::from_ymd(2026, 1, 1).unwrap();
+        let day = crate::postgres::datetime::PgDate::from_ymd(2026, 1, 1).unwrap();
         let dated = PgValue::Array(PgArray::new(vec![Some(PgValue::Date(day))]));
         assert!(dated.output().is_none());
         assert_eq!(
-            array.into_cast_value(crate::integer::IntegerType::Integer),
-            Err(crate::cast::CastError::Unsupported)
+            array.into_cast_value(crate::postgres::integer::IntegerType::Integer),
+            Err(crate::postgres::cast::CastError::Unsupported)
         );
     }
 

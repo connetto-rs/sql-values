@@ -1,4 +1,4 @@
-use sql_values::PgDate;
+use sql_values::postgres::PgDate;
 
 /// Every accepted spelling of `date`, each a body and the ` BC` suffix that trails the whole
 /// value. Year `0000` spells 1 BC without the suffix, as MySQL and SQLite print it.

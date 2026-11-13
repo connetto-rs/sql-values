@@ -16,7 +16,7 @@ use diesel::{
     RunQueryDsl,
     sql_types::{Bool, Text},
 };
-use sql_values::PgBytea;
+use sql_values::postgres::PgBytea;
 
 static PG18: postgres::Slot = exit_slot::ExitSlot::new();
 
