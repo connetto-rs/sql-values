@@ -9,6 +9,7 @@ use super::{
     bpchar::PgBpchar,
     datetime::{DateTimeError, InputContext, PgDate, PgTimestamp, PgTimestampTz},
     integer::IntegerType,
+    jsonb::{JsonbError, JsonbKind, PgJsonb},
     numeric::{NumericError, NumericTypmod, PgNumeric},
 };
 
@@ -49,6 +50,8 @@ pub enum CastTarget {
     Timestamp(Option<u8>),
     /// `timestamptz`, or `timestamptz(p)` with a precision, where one above 6 is 6.
     TimestampTz(Option<u8>),
+    /// `jsonb`.
+    Jsonb,
 }
 
 /// The length of a `varchar(n)` or `char(n)` type, in characters.
@@ -115,6 +118,8 @@ pub enum PgType {
     Time,
     /// `time with time zone`.
     TimeTz,
+    /// `jsonb`.
+    Jsonb,
 }
 
 impl fmt::Display for PgType {
@@ -140,6 +145,7 @@ impl PgType {
             Self::TimestampTz => "timestamp with time zone",
             Self::Time => "time without time zone",
             Self::TimeTz => "time with time zone",
+            Self::Jsonb => "jsonb",
         }
     }
 
@@ -170,6 +176,7 @@ impl CastTarget {
             Self::Date => PgType::Date,
             Self::Timestamp(_) => PgType::Timestamp,
             Self::TimestampTz(_) => PgType::TimestampTz,
+            Self::Jsonb => PgType::Jsonb,
         }
     }
 }
@@ -199,6 +206,8 @@ pub enum CastValue {
     Timestamp(PgTimestamp),
     /// A `timestamptz`, printed as under `TimeZone` `UTC`.
     TimestampTz(PgTimestampTz),
+    /// A `jsonb`.
+    Jsonb(PgJsonb),
 }
 
 /// Why PostgreSQL refuses a cast, one variant per message it raises, or why this crate declines
@@ -251,6 +260,18 @@ pub enum CastError {
         /// The target's type.
         to: PgType,
     },
+    /// A `jsonb` of a kind the cast to a scalar type cannot take, a `null` aside, which casts
+    /// to `NULL`.
+    #[error("cannot cast jsonb {from} to type {to}")]
+    CannotCastJsonb {
+        /// The kind of the `jsonb`.
+        from: JsonbKind,
+        /// The target's type.
+        to: PgType,
+    },
+    /// Text `jsonb_in` cannot read, any number in it aside, whose refusal is `numeric_in`'s.
+    #[error(transparent)]
+    Jsonb(JsonbError),
     /// An array literal `array_in` cannot read.
     #[error("malformed array literal")]
     MalformedArrayLiteral,
@@ -338,11 +359,20 @@ pub enum CastError {
 ///     cast(Literal::Quoted("2030-01-01 00:00:00"), instant),
 ///     Err(CastError::Unsupported),
 /// );
+///
+/// assert_eq!(
+///     cast(Literal::Quoted(r#"{"b": 1, "a": 2.50}"#), CastTarget::Jsonb).unwrap(),
+///     r#"{"a": 2.50, "b": 1}"#,
+/// );
+/// assert_eq!(cast(Literal::Number("1"), CastTarget::Jsonb), Err(CastError::CannotCast {
+///     from: PgType::Integer,
+///     to: PgType::Jsonb,
+/// }));
 /// ```
 pub fn cast_literal(literal: Literal<'_>, target: CastTarget) -> Result<CastValue, CastError> {
     match literal {
         Literal::Quoted(text) => cast_quoted(text, target),
-        Literal::Number(text) => cast_value(number_constant(text)?, target),
+        Literal::Number(text) => cast_non_jsonb(number_constant(text)?, target),
     }
 }
 
@@ -378,14 +408,17 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
     }
 }
 
-/// The value PostgreSQL 18's explicit cast `value::target` produces, or the error it raises.
+/// The value PostgreSQL 18's explicit cast `value::target` produces, `None` for `NULL`, or the
+/// error it raises.
 ///
 /// A value of a character type is read by the target's input function, as `pg_cast`'s I/O
 /// coercion does, and a value cast to a character type is printed by its type's output function,
 /// `boolean` as `true` or `false`. Between the other types the cast is the function `pg_cast`
 /// names, `int4_bool`, `bool_int4`, the integer narrowings, `int*_numeric`, `numeric_int*`,
-/// `date_timestamp` and `timestamp_date`. The length coercion of the target's modifier follows,
-/// and a pair `pg_cast` has no cast for raises [`CastError::CannotCast`].
+/// `date_timestamp`, `timestamp_date`, `jsonb_bool`, `jsonb_numeric` and `jsonb_int*`, the last
+/// three followed by `numeric_int*`. A `jsonb` `null` cast to `boolean`, `numeric` or an integer
+/// type is `NULL`, the one cast giving `NULL`. The length coercion of the target's modifier
+/// follows, and a pair `pg_cast` has no cast for raises [`CastError::CannotCast`].
 ///
 /// # Errors
 ///
@@ -393,18 +426,23 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 /// the session's `TimeZone` decides, or a text the target's input function is not modelled for.
 ///
 /// ```
-/// use sql_values::postgres::{CastError, CastTarget, CastValue, PgNumeric, PgType, cast_value};
+/// use sql_values::postgres::{
+///     CastError, CastTarget, CastValue, JsonbKind, PgJsonb, PgNumeric, PgType, cast_value,
+/// };
 ///
-/// let cast = |value, target| cast_value(value, target).map(|value| value.to_string());
+/// let cast = |value, target| {
+///     cast_value(value, target).map(|value| value.map(|value| value.to_string()))
+/// };
+/// let some = |text: &str| Ok(Some(text.to_owned()));
 ///
-/// assert_eq!(cast(CastValue::Integer(1), CastTarget::Boolean).unwrap(), "t");
+/// assert_eq!(cast(CastValue::Integer(1), CastTarget::Boolean), some("t"));
 /// assert_eq!(
 ///     cast(CastValue::Bigint(1), CastTarget::Boolean),
 ///     Err(CastError::CannotCast { from: PgType::Bigint, to: PgType::Boolean }),
 /// );
-/// assert_eq!(cast(CastValue::Boolean(true), CastTarget::Text).unwrap(), "true");
+/// assert_eq!(cast(CastValue::Boolean(true), CastTarget::Text), some("true"));
 /// let half = PgNumeric::parse("-2.5").unwrap();
-/// assert_eq!(cast(CastValue::Numeric(half), CastTarget::Smallint).unwrap(), "-3");
+/// assert_eq!(cast(CastValue::Numeric(half), CastTarget::Smallint), some("-3"));
 /// assert_eq!(
 ///     cast(CastValue::Numeric(PgNumeric::NAN), CastTarget::Integer),
 ///     Err(CastError::CannotConvertNaN(PgType::Integer)),
@@ -417,8 +455,54 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 ///     cast(CastValue::Text("x".into()), CastTarget::Boolean),
 ///     Err(CastError::InvalidInputSyntax(PgType::Boolean)),
 /// );
+///
+/// let jsonb = |text| CastValue::Jsonb(PgJsonb::parse(text).unwrap());
+/// assert_eq!(cast(jsonb("1.5"), CastTarget::Integer), some("2"));
+/// assert_eq!(cast(jsonb("null"), CastTarget::Integer), Ok(None));
+/// assert_eq!(
+///     cast(jsonb("[1]"), CastTarget::Numeric(None)),
+///     Err(CastError::CannotCastJsonb { from: JsonbKind::Array, to: PgType::Numeric }),
+/// );
 /// ```
-pub fn cast_value(value: CastValue, target: CastTarget) -> Result<CastValue, CastError> {
+pub fn cast_value(value: CastValue, target: CastTarget) -> Result<Option<CastValue>, CastError> {
+    match value {
+        CastValue::Jsonb(value) => cast_jsonb(value, target),
+        value => cast_non_jsonb(value, target).map(Some),
+    }
+}
+
+/// The cast of a `jsonb`, by `jsonb_bool`, `jsonb_numeric`, `jsonb_int*` or its output function.
+fn cast_jsonb(value: PgJsonb, target: CastTarget) -> Result<Option<CastValue>, CastError> {
+    let to = target.pg_type();
+    let cannot_cast = |from| CastError::CannotCastJsonb { from, to };
+    match target {
+        CastTarget::Boolean => Ok(value
+            .to_bool()
+            .map_err(cannot_cast)?
+            .map(CastValue::Boolean)),
+        CastTarget::Smallint
+        | CastTarget::Integer
+        | CastTarget::Bigint
+        | CastTarget::Numeric(_) => value
+            .into_numeric()
+            .map_err(cannot_cast)?
+            .map(|number| cast_non_jsonb(CastValue::Numeric(number), target))
+            .transpose(),
+        CastTarget::Text | CastTarget::Varchar(_) | CastTarget::Bpchar(_) => {
+            Ok(Some(character(&value.to_string(), target)))
+        }
+        CastTarget::Jsonb => Ok(Some(CastValue::Jsonb(value))),
+        CastTarget::Date | CastTarget::Timestamp(_) | CastTarget::TimestampTz(_) => {
+            Err(CastError::CannotCast {
+                from: PgType::Jsonb,
+                to,
+            })
+        }
+    }
+}
+
+/// The cast of a value other than a `jsonb`, which never gives `NULL`.
+fn cast_non_jsonb(value: CastValue, target: CastTarget) -> Result<CastValue, CastError> {
     let cannot_cast = CastError::CannotCast {
         from: value.pg_type(),
         to: target.pg_type(),
@@ -511,6 +595,7 @@ impl CastValue {
             Self::Date(_) => PgType::Date,
             Self::Timestamp(_) => PgType::Timestamp,
             Self::TimestampTz(_) => PgType::TimestampTz,
+            Self::Jsonb(_) => PgType::Jsonb,
         }
     }
 }
@@ -532,15 +617,26 @@ fn timestamp(at: PgTimestamp, precision: Option<u8>) -> CastValue {
     CastValue::Timestamp(PgTimestamp::from_stored(micros))
 }
 
-/// `numeric_in`, its refusal as the cast error. It raises only a syntax error or an overflow.
+/// `numeric_in`, its refusal as the cast error.
 fn numeric_input(text: &str) -> Result<PgNumeric, CastError> {
-    PgNumeric::parse(text).map_err(|error| {
-        if error == NumericError::InvalidInputSyntax {
-            CastError::InvalidInputSyntax(PgType::Numeric)
-        } else {
-            CastError::NumericFormatOverflow
-        }
-    })
+    PgNumeric::parse(text).map_err(numeric_input_error)
+}
+
+/// The cast error of a refusal by `numeric_in`, which raises only a syntax error or an overflow.
+fn numeric_input_error(error: NumericError) -> CastError {
+    if error == NumericError::InvalidInputSyntax {
+        CastError::InvalidInputSyntax(PgType::Numeric)
+    } else {
+        CastError::NumericFormatOverflow
+    }
+}
+
+/// The cast error of a refusal by `jsonb_in`, the one by `numeric_in` for a number in it.
+fn jsonb_input_error(error: JsonbError) -> CastError {
+    match error {
+        JsonbError::Numeric(error) => numeric_input_error(error),
+        error => CastError::Jsonb(error),
+    }
 }
 
 /// The lexer's token for a numeric constant.
@@ -648,6 +744,9 @@ fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
             let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
             Ok(CastValue::TimestampTz(PgTimestampTz::from_stored(micros)))
         }
+        CastTarget::Jsonb => PgJsonb::parse(text)
+            .map(CastValue::Jsonb)
+            .map_err(jsonb_input_error),
     }
 }
 
@@ -844,6 +943,7 @@ impl fmt::Display for CastValue {
             Self::Date(date) => write!(f, "{date}"),
             Self::Timestamp(at) => write!(f, "{at}"),
             Self::TimestampTz(at) => write!(f, "{at}"),
+            Self::Jsonb(value) => write!(f, "{value}"),
         }
     }
 }

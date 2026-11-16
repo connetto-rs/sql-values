@@ -23,9 +23,14 @@ use crate::{containers, exit_slot::ExitSlot};
 /// The slot one `postgres:<tag>` container lives in until the binary exits.
 pub type Slot = ExitSlot<Container<GenericImage>>;
 
-/// A connection to the `postgres:<tag>` container in `slot`, started on
-/// first use.
+/// A connection to the `postgres` database of the `postgres:<tag>` container in `slot`, started
+/// on first use.
 pub fn connect(slot: &'static Slot, tag: &str) -> PgConnection {
+    connect_to(slot, tag, "postgres")
+}
+
+/// A connection to `database` in the `postgres:<tag>` container in `slot`, started on first use.
+pub fn connect_to(slot: &'static Slot, tag: &str, database: &str) -> PgConnection {
     let port = slot.with(
         || {
             containers::sweep_abandoned();
@@ -47,6 +52,7 @@ pub fn connect(slot: &'static Slot, tag: &str) -> PgConnection {
                 .expect("get postgres port")
         },
     );
-    let url = format!("host=127.0.0.1 port={port} user=postgres password=postgres dbname=postgres");
+    let url =
+        format!("host=127.0.0.1 port={port} user=postgres password=postgres dbname={database}");
     PgConnection::establish(&url).unwrap_or_else(|e| panic!("connect to postgres {tag}: {e}"))
 }

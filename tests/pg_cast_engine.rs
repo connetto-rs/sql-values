@@ -10,17 +10,15 @@ mod pg18;
 #[path = "support/postgres.rs"]
 mod postgres;
 
-use std::{
-    cmp::Ordering,
-    hash::{BuildHasher, RandomState},
-};
+use core::{cmp::Ordering, hash::BuildHasher};
+use std::hash::RandomState;
 
 use diesel::{
     dsl::sql,
     prelude::*,
     sql_types::{Bool, Integer, Text},
 };
-use pg18::{connect, pg_order, pg_text, quoted};
+use pg18::{connect, pg_nullable_text, pg_order, pg_text, quoted};
 use sql_values::postgres::{
     CastError, CastTarget, CastValue, CharLength, IntegerType, Literal, NumericTypmod, PgBpchar,
     PgNumeric, PgType, PgValue, cast_literal, cast_value, number_constant,
@@ -55,6 +53,7 @@ fn targets() -> Vec<(&'static str, CastTarget)> {
         ("timestamp(6)", CastTarget::Timestamp(Some(6))),
         ("timestamptz", CastTarget::TimestampTz(None)),
         ("timestamptz(0)", CastTarget::TimestampTz(Some(0))),
+        ("jsonb", CastTarget::Jsonb),
     ]
 }
 
@@ -299,6 +298,34 @@ const QUOTED: &[&str] = &[
     "4714-11-24 00:30 BC CET",
     "294276-12-31 23:30 CET",
     "294277-01-01 00:30 CET",
+    // jsonb
+    r#"{"b": [1, 2.50, null], "a": {"y": true, "x": false}, "a": "last"}"#,
+    r#" [ "\u00e9\ud83d\ude00\n\/", -0.0, 1E+2, 0e0 ] "#,
+    "null",
+    "true",
+    "\"t\"",
+    "-12.5e-1",
+    "[]",
+    "{}",
+    "[1,]",
+    r#"{"a" 1}"#,
+    r#"{"a":1 "b":2}"#,
+    "{1:2}",
+    "[1 2]",
+    "1 2",
+    "[",
+    r#""\u0000""#,
+    r#""\udc00""#,
+    r#""\ud800\ud800""#,
+    r#""\u12g4""#,
+    r#""\x""#,
+    "\"a\tb\"",
+    "01",
+    "+1",
+    ".5",
+    "1e1000000",
+    "1e-2000000000",
+    "nul",
 ];
 
 /// Numeric constants of every lexer token and every type `make_const` gives them.
@@ -524,6 +551,20 @@ const VALUES: &[(&str, &str)] = &[
     ("-infinity", "timestamp"),
     ("2026-01-01 10:00:00.5+02", "timestamptz"),
     ("infinity", "timestamptz"),
+    ("null", "jsonb"),
+    ("true", "jsonb"),
+    ("false", "jsonb"),
+    ("1.5", "jsonb"),
+    ("-2.5", "jsonb"),
+    ("12.345", "jsonb"),
+    ("40000", "jsonb"),
+    ("3e9", "jsonb"),
+    ("1e20", "jsonb"),
+    ("\"12\"", "jsonb"),
+    ("[1]", "jsonb"),
+    (r#"{"b": 1, "a": [true, "x\ny"]}"#, "jsonb"),
+    (r#" {"a": 1} "#, "text"),
+    ("[1,", "text"),
 ];
 
 /// Every typed value under every target, skipping the casts the crate declines.
@@ -543,11 +584,11 @@ fn pg18_casts_every_value_to_every_target() {
         for &(type_name, target) in &all_targets {
             let got = match cast_value(value.clone(), target) {
                 Err(CastError::Unsupported) => continue,
-                got => got.map(|value| value.to_string()),
+                got => got.map(|value| value.map(|value| value.to_string())),
             };
             answered += 1;
             let expression = format!("({}::{source_name})::{type_name}", quoted(text));
-            let expected = pg_text(&mut conn, &expression);
+            let expected = pg_nullable_text(&mut conn, &expression);
             if got != expected {
                 mismatches.push(format!(
                     "{expression}: crate {got:?}, PostgreSQL {expected:?}"
@@ -817,6 +858,20 @@ const COMPARED: &[(&str, &str)] = &[
     ("4714-11-24 00:00 BC", "timestamp"),
     ("infinity", "timestamp"),
     ("-infinity", "timestamp"),
+    ("[]", "jsonb"),
+    ("null", "jsonb"),
+    ("\"4\"", "jsonb"),
+    ("1", "jsonb"),
+    ("1.00", "jsonb"),
+    ("-1e3", "jsonb"),
+    ("true", "jsonb"),
+    ("[null]", "jsonb"),
+    ("[1, 2]", "jsonb"),
+    ("[[]]", "jsonb"),
+    ("{}", "jsonb"),
+    (r#"{"a": 1}"#, "jsonb"),
+    (r#"{"a": 1.0}"#, "jsonb"),
+    (r#"{"a": 1, "bb": 2}"#, "jsonb"),
 ];
 
 /// Every pair of values orders as PostgreSQL's `<` and `=` order it where PostgreSQL has an

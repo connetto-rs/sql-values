@@ -21,7 +21,7 @@ use super::cast::{CastError, CastTarget, CastValue, PgType};
 ///
 /// // `value` is the cast from `bigint` to the type.
 /// for integer in [IntegerType::Smallint, IntegerType::Integer, IntegerType::Bigint] {
-///     assert_eq!(cast_value(CastValue::Bigint(7), integer.into()), integer.value(7));
+///     assert_eq!(cast_value(CastValue::Bigint(7), integer.into()), integer.value(7).map(Some));
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

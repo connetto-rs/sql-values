@@ -105,3 +105,10 @@ path = "fuzz_targets/fuzz_cast.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_jsonb"
+path = "fuzz_targets/fuzz_jsonb.rs"
+test = false
+doc = false
+bench = false

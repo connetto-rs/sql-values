@@ -7,14 +7,14 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://github.com/connetto-rs/sql-values)
 [![license](https://img.shields.io/crates/l/sql-values.svg)](https://github.com/connetto-rs/sql-values/blob/main/LICENSE)
 
-`sql-values` holds the semantics of SQL values. It ports PostgreSQL's own value rules (input, canonical output, order, also between values of different types, `numeric`, `date` and `interval` arithmetic, and the explicit cast of a literal or a value), each checked against PostgreSQL 18, and it reads the text forms PostgreSQL, MySQL and SQLite emit for scalar values, so every wire-text consumer decodes the same spelling to the same Rust value. Dates and times are held as PostgreSQL stores them, over its whole range, and `timestamptz` arithmetic runs in a named time zone from jiff's bundled IANA database. Arrays are held the way PostgreSQL holds them, with their dimensions and lower bounds, and read and printed as `array_in` and `array_out` do.
+`sql-values` holds the semantics of SQL values. It ports PostgreSQL's own value rules (input, canonical output, order, also between values of different types, `numeric`, `date` and `interval` arithmetic, and the explicit cast of a literal or a value), each checked against PostgreSQL 18, and it reads the text forms PostgreSQL, MySQL and SQLite emit for scalar values, so every wire-text consumer decodes the same spelling to the same Rust value. Dates and times are held as PostgreSQL stores them, over its whole range, and `timestamptz` arithmetic runs in a named time zone from jiff's bundled IANA database. Arrays are held the way PostgreSQL holds them, with their dimensions and lower bounds, and read and printed as `array_in` and `array_out` do. A `jsonb` is read, printed and ordered as `jsonb_in`, `jsonb_out` and its btree operators do.
 
 ```rust
 use sql_values::{
     parse_bool,
     postgres::{
-        CastTarget, InputContext, IntervalError, Literal, PgNumeric, PgTimeZone, PgTimestampTz,
-        cast_literal, parse_interval, parse_timestamp,
+        CastTarget, InputContext, IntervalError, Literal, PgJsonb, PgNumeric, PgTimeZone,
+        PgTimestampTz, cast_literal, parse_interval, parse_timestamp,
     },
 };
 
@@ -41,6 +41,9 @@ assert_eq!(level.to_string(), "3");
 
 let third = PgNumeric::parse("10").unwrap().checked_div(&PgNumeric::from(3)).unwrap();
 assert_eq!(third.to_string(), "3.3333333333333333");
+
+let document = PgJsonb::parse(r#"{"bb": 1.50, "a": [true, null]}"#).unwrap();
+assert_eq!(document.to_string(), r#"{"a": [true, null], "bb": 1.50}"#);
 ```
 
 The crate supports `no_std`. IANA time zone names such as `Europe/Rome` load from jiff's bundled database through the `tzdb` feature, and without it a zone setting reads as in a PostgreSQL with no time zone files, accepting `GMT`, offsets and POSIX rules. Decimal parsing is available through the `decimal` feature, conversions to and from jiff's date and time types through the `jiff` feature, and `serde` derives for interval, date and time values through the `serde` feature.

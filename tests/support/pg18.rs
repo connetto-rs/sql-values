@@ -7,15 +7,15 @@
 //! mod pg18;
 //! ```
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use diesel::{
     dsl::sql,
     prelude::*,
     result::Error as DieselError,
-    sql_types::{Bool, Integer, Text},
+    sql_types::{Bool, Integer, Nullable, Text},
 };
-use sql_values::postgres::{CastError, PgType};
+use sql_values::postgres::{CastError, JsonbError, JsonbKind, PgType};
 
 use crate::{exit_slot::ExitSlot, postgres};
 
@@ -41,8 +41,73 @@ pub fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
-/// The crate's error for a message PostgreSQL raises, which names the input in quotes.
-pub fn pg_error(message: &str) -> CastError {
+/// The `jsonb_in` refusal PostgreSQL reports with `message` and `detail`, or `None` for another
+/// message.
+pub fn pg_jsonb_error(message: &str, detail: Option<&str>) -> Option<JsonbError> {
+    if message != "invalid input syntax for type json"
+        && message != "unsupported Unicode escape sequence"
+    {
+        return None;
+    }
+    let detail = detail.unwrap_or_else(|| panic!("PostgreSQL raised {message:?} without detail"));
+    let errors = [
+        ("Token \"", JsonbError::InvalidToken),
+        ("Escape sequence \"", JsonbError::InvalidEscape),
+        (
+            "Character with value ",
+            JsonbError::UnescapedControlCharacter,
+        ),
+        (
+            "\"\\u\" must be followed by four hexadecimal digits.",
+            JsonbError::UnicodeEscapeFormat,
+        ),
+        (
+            "Unicode high surrogate must not follow a high surrogate.",
+            JsonbError::HighSurrogateRepeated,
+        ),
+        (
+            "Unicode low surrogate must follow a high surrogate.",
+            JsonbError::LowSurrogateExpected,
+        ),
+        (
+            "\\u0000 cannot be converted to text.",
+            JsonbError::CodePointZero,
+        ),
+        ("Expected JSON value, but found ", JsonbError::ExpectedValue),
+        ("Expected string, but found ", JsonbError::ExpectedString),
+        (
+            "Expected string or \"}\", but found ",
+            JsonbError::ExpectedStringOrObjectEnd,
+        ),
+        ("Expected \":\", but found ", JsonbError::ExpectedColon),
+        (
+            "Expected \",\" or \"}\", but found ",
+            JsonbError::ExpectedCommaOrObjectEnd,
+        ),
+        (
+            "Expected \",\" or \"]\", but found ",
+            JsonbError::ExpectedCommaOrArrayEnd,
+        ),
+        ("Expected end of input, but found ", JsonbError::ExpectedEnd),
+        (
+            "The input string ended unexpectedly.",
+            JsonbError::UnexpectedEnd,
+        ),
+    ];
+    let error = errors
+        .into_iter()
+        .find(|(prefix, _)| detail.starts_with(prefix))
+        .map(|(_, error)| error)
+        .unwrap_or_else(|| panic!("PostgreSQL raised {message:?} with detail {detail:?}"));
+    Some(error)
+}
+
+/// The crate's error for a message PostgreSQL raises, which names the input in quotes, and its
+/// detail.
+pub fn pg_error(message: &str, detail: Option<&str>) -> CastError {
+    if let Some(error) = pg_jsonb_error(message, detail) {
+        return CastError::Jsonb(error);
+    }
     let stem = match message.strip_prefix("value \"") {
         Some(rest) => {
             let (_, type_name) = rest
@@ -67,6 +132,7 @@ pub fn pg_error(message: &str) -> CastError {
         PgType::Date,
         PgType::Timestamp,
         PgType::TimestampTz,
+        PgType::Jsonb,
     ];
     let mut errors = vec![
         CastError::MalformedArrayLiteral,
@@ -83,6 +149,14 @@ pub fn pg_error(message: &str) -> CastError {
         CastError::DateOutOfRangeForTimestamp,
         CastError::TimeZoneDisplacementOutOfRange,
     ];
+    let kinds = [
+        JsonbKind::Null,
+        JsonbKind::String,
+        JsonbKind::Numeric,
+        JsonbKind::Boolean,
+        JsonbKind::Array,
+        JsonbKind::Object,
+    ];
     for pg_type in types {
         errors.push(CastError::InvalidInputSyntax(pg_type));
         errors.push(CastError::ValueOutOfRange(pg_type));
@@ -92,6 +166,9 @@ pub fn pg_error(message: &str) -> CastError {
         for from in types {
             errors.push(CastError::CannotCast { from, to: pg_type });
         }
+        for from in kinds {
+            errors.push(CastError::CannotCastJsonb { from, to: pg_type });
+        }
     }
     errors
         .into_iter()
@@ -99,15 +176,27 @@ pub fn pg_error(message: &str) -> CastError {
         .unwrap_or_else(|| panic!("PostgreSQL raised {message:?}"))
 }
 
-/// The text `expression` prints through its type's output function, or the error it raises.
-pub fn pg_text(conn: &mut PgConnection, expression: &str) -> Result<String, CastError> {
+/// The text `expression` prints through its type's output function, `None` for `NULL`, or the
+/// error it raises.
+pub fn pg_nullable_text(
+    conn: &mut PgConnection,
+    expression: &str,
+) -> Result<Option<String>, CastError> {
     // Raw SQL with the literal inline, since a bound parameter is typed `text` and casts as
     // `text` does, never as the unknown literal under test.
-    match diesel::select(sql::<Text>(&format!("format('%s', {expression})"))).get_result(conn) {
+    let printed =
+        format!("CASE WHEN ({expression}) IS NULL THEN NULL ELSE format('%s', {expression}) END");
+    match diesel::select(sql::<Nullable<Text>>(&printed)).get_result(conn) {
         Ok(text) => Ok(text),
-        Err(DieselError::DatabaseError(_, info)) => Err(pg_error(info.message())),
+        Err(DieselError::DatabaseError(_, info)) => Err(pg_error(info.message(), info.details())),
         Err(other) => panic!("{expression}: {other}"),
     }
+}
+
+/// The text `expression` prints through its type's output function, empty for `NULL` as
+/// `format` prints it, or the error it raises.
+pub fn pg_text(conn: &mut PgConnection, expression: &str) -> Result<String, CastError> {
+    pg_nullable_text(conn, expression).map(Option::unwrap_or_default)
 }
 
 /// The order PostgreSQL's `<` and `=` give `left` and `right`, or `None` when it has no operator

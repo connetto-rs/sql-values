@@ -2,7 +2,9 @@ use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use sql_values::{
     parse_bool, parse_f64, parse_i64, parse_pg_bytea_hex,
-    postgres::{parse_date, parse_interval, parse_time, parse_timestamp, parse_timestamp_tz},
+    postgres::{
+        PgJsonb, parse_date, parse_interval, parse_time, parse_timestamp, parse_timestamp_tz,
+    },
 };
 
 #[cfg(feature = "decimal")]
@@ -196,6 +198,40 @@ fn bench_parse_decimal(c: &mut Criterion) {
     group.finish();
 }
 
+/// Pairs of `jsonb` canonical texts, as a collation over stored values compares them.
+fn jsonb_pairs() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("1", "1.0"),
+        (r#""alpha""#, r#""beta""#),
+        (
+            r#"{"id": 7, "tags": ["a", "b"], "price": 12.50}"#,
+            r#"{"id": 7, "tags": ["a", "c"], "price": 12.50}"#,
+        ),
+        (
+            r#"{"a": {"b": {"c": [1, 2, 3, {"d": null}]}}, "e": true}"#,
+            r#"{"a": {"b": {"c": [1, 2, 3, {"d": null}]}}, "e": true}"#,
+        ),
+    ]
+}
+
+fn bench_compare_jsonb(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compare_jsonb");
+    for (left, right) in jsonb_pairs() {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(left),
+            &(left, right),
+            |b, pair| {
+                b.iter(|| {
+                    let left = PgJsonb::parse(black_box(pair.0)).unwrap();
+                    let right = PgJsonb::parse(black_box(pair.1)).unwrap();
+                    black_box(left.cmp(&right))
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
 #[cfg(feature = "decimal")]
 criterion_group!(
     benches,
@@ -209,6 +245,7 @@ criterion_group!(
     bench_parse_f64,
     bench_parse_interval,
     bench_parse_decimal,
+    bench_compare_jsonb,
 );
 
 #[cfg(not(feature = "decimal"))]
@@ -223,6 +260,7 @@ criterion_group!(
     bench_parse_i64,
     bench_parse_f64,
     bench_parse_interval,
+    bench_compare_jsonb,
 );
 
 criterion_main!(benches);
