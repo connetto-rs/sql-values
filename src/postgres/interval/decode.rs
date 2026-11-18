@@ -969,7 +969,7 @@ fn hex_to_f64(mantissa: u64, exponent: i64, sticky: bool) -> f64 {
         (mantissa, exponent)
     };
     debug_assert!(
-        significand >> 53 == 0 || significand == 1 << 53,
+        significand <= 1 << 53,
         "the significand was rounded to 53 bits"
     );
     // Lossless, since a significand of at most 2^53 is a double, and every halving or doubling
