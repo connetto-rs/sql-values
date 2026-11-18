@@ -9,6 +9,7 @@ mod float;
 mod float8;
 mod integer;
 mod interval;
+mod jsonb;
 mod numeric;
 mod value;
 mod zone;
@@ -30,6 +31,7 @@ pub use interval::{
     IntervalError, IntervalFields, IntervalSum, IntervalTypmod, PgInterval, ShiftError,
     parse_interval, parse_interval_typmod,
 };
+pub use jsonb::{JsonbError, JsonbKind, PgJsonb};
 #[cfg(feature = "decimal")]
 pub use numeric::NonFiniteNumeric;
 pub use numeric::{NumericError, NumericTypmod, PgNumeric};

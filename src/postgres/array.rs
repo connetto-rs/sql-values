@@ -332,8 +332,8 @@ impl PgArray {
         Ok(Self { dims, elements })
     }
 
-    /// The explicit cast of every element to `element`, as [`cast_value`] casts it, `NULL`s kept
-    /// and the dimensions kept.
+    /// The explicit cast of every element to `element`, as [`cast_value`] casts it, `NULL`s kept,
+    /// a `jsonb` `null` cast to `NULL`, and the dimensions kept.
     ///
     /// ```
     /// use sql_values::postgres::{CastError, CastTarget, PgArray};
@@ -346,6 +346,12 @@ impl PgArray {
     ///         .cast(CastTarget::Bpchar(None)),
     ///     Err(CastError::Unsupported),
     /// );
+    ///
+    /// let documents = PgArray::parse(r#"{"{\"b\":1,\"a\":2}",null,"\"x\""}"#, CastTarget::Jsonb);
+    /// let documents = documents.unwrap();
+    /// assert_eq!(documents.to_string(), r#"{"{\"a\": 2, \"b\": 1}",NULL,"\"x\""}"#);
+    /// let numbers = PgArray::parse(r#"{1.5,"null"}"#, CastTarget::Jsonb).unwrap();
+    /// assert_eq!(numbers.cast(CastTarget::Integer).unwrap().to_string(), "{2,NULL}");
     /// ```
     ///
     /// # Errors
@@ -359,10 +365,9 @@ impl PgArray {
             .iter()
             .map(|value| match value {
                 None => Ok(None),
-                Some(value) => {
-                    let value = cast_value(element_value(value)?, element)?;
-                    into_value(value).map(Some)
-                }
+                Some(value) => cast_value(element_value(value)?, element)?
+                    .map(into_value)
+                    .transpose(),
             })
             .collect::<Result<Vec<Option<PgValue>>, CastError>>()?;
         Ok(Self {
