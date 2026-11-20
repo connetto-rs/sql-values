@@ -15,7 +15,7 @@ use core::{cmp::Ordering, hash::BuildHasher};
 use std::{hash::RandomState, sync::Once};
 
 use diesel::{PgConnection, RunQueryDsl, sql_query};
-use pg18::{PG18, PG18_TAG, connect, pg_order, pg_text, quoted};
+use pg18::{PG18, PG18_TAG, connect, pg_nullable_text, pg_order, pg_text, quoted};
 use sql_values::postgres::{CastError, JsonbError, NumericError, PgJsonb, PgType};
 
 /// The database whose default collation is `C`, which `jsonb` compares strings and keys under.
@@ -169,6 +169,24 @@ fn pg18_reads_and_prints_every_text() {
         .filter_map(|&text| {
             let got = PgJsonb::parse(text).map(|jsonb| jsonb.to_string());
             let expected = pg_jsonb(&mut conn, text);
+            (got != expected).then(|| format!("{text:?}: crate {got:?}, PostgreSQL {expected:?}"))
+        })
+        .collect();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+/// Every value answers the text `#>> '{}'` extracts from it.
+#[test]
+fn pg18_extracts_the_text_of_every_value() {
+    let mut conn = connect();
+    let mismatches: Vec<String> = TEXTS
+        .iter()
+        .filter_map(|&text| {
+            let value = PgJsonb::parse(text).ok()?;
+            let got = value.to_text().map(String::from);
+            let expected =
+                pg_nullable_text(&mut conn, &format!("{}::jsonb #>> '{{}}'", quoted(text)))
+                    .unwrap_or_else(|error| panic!("{text:?} #>> '{{}}' raised {error}"));
             (got != expected).then(|| format!("{text:?}: crate {got:?}, PostgreSQL {expected:?}"))
         })
         .collect();

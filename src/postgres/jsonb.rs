@@ -4,7 +4,11 @@
 //! A value is held as the token stream `JsonbIteratorNext` walks, so parsing, printing,
 //! comparing and dropping never recurse, and nesting of any depth stays within the stack.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{
     cmp::Ordering,
     fmt::{self, Write},
@@ -236,6 +240,32 @@ impl PgJsonb {
     /// The text of a string or key token's span.
     fn text(&self, span: Span) -> &str {
         &self.strings[span.start..span.end]
+    }
+
+    /// The text `#>> '{}'` extracts, the one `->>` and `#>>` give for a value they reach, and
+    /// `None` for `null`. A string gives its contents as they are, without the quotes and
+    /// escapes [`Display`](fmt::Display) adds, and any other value gives what `jsonb_out` prints.
+    ///
+    /// ```
+    /// use sql_values::postgres::PgJsonb;
+    ///
+    /// let text = |json| PgJsonb::parse(json).unwrap().to_text().map(String::from);
+    /// assert_eq!(text(r#""a\nb \" \u00e9""#).as_deref(), Some("a\nb \" é"));
+    /// assert_eq!(text(r#""8""#).as_deref(), Some("8"));
+    /// assert_eq!(text("1e2").as_deref(), Some("100"));
+    /// assert_eq!(text("1.50").as_deref(), Some("1.50"));
+    /// assert_eq!(text("true").as_deref(), Some("true"));
+    /// assert_eq!(text("null"), None);
+    /// assert_eq!(text(r#"{"b":1,"a":[1, 2]}"#).as_deref(), Some(r#"{"a": [1, 2], "b": 1}"#));
+    /// assert_eq!(text(r#"["a"]"#).as_deref(), Some(r#"["a"]"#));
+    /// ```
+    #[must_use]
+    pub fn to_text(&self) -> Option<Cow<'_, str>> {
+        match self.scalar() {
+            Some(Token::Null) => None,
+            Some(Token::String(span)) => Some(Cow::Borrowed(self.text(*span))),
+            _ => Some(Cow::Owned(self.to_string())),
+        }
     }
 
     /// The top-level scalar, or `None` for an array or an object.
