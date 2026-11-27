@@ -267,6 +267,17 @@ impl PgNumeric {
         .ok()
     }
 
+    /// `int64_div_fast_to_numeric`, `value / 10^scale` printed with `scale` digits after the
+    /// point.
+    pub(crate) fn from_scaled_i64(value: i64, scale: i64) -> Self {
+        let mut finite = Finite::from_i64(value);
+        if !finite.digits.is_empty() {
+            finite.weight -= scale;
+        }
+        finite.dscale = scale;
+        Self(Repr::Finite(finite))
+    }
+
     /// The order class of the value, rising from `-Infinity` through negative, zero, positive and
     /// `Infinity` to `NaN`.
     fn class(&self) -> i8 {
