@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use sql_values::postgres::{
-    DateTimeError, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp, PgTimestampTz,
+    DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimeZone, PgTimestamp, PgTimestampTz,
 };
 
 /// 4714-11-24 BC and 5874897-12-31, in days from 2000-01-01.
@@ -178,6 +178,51 @@ fn timestamptz_holds_postgresql_range_and_prints_at_utc() {
     assert_eq!(PgTimestampTz::INFINITY.to_string(), "infinity");
     assert!(PgTimestampTz::NEG_INFINITY < first && !PgTimestampTz::NEG_INFINITY.is_finite());
     assert!(!PgTimestampTz::INFINITY.is_finite() && last.is_finite());
+}
+
+/// `AdjustTimestampForTypmod` and `AdjustTimeForTypmod`, as `timestamp(p)`, `timestamptz(p)`,
+/// `time(p)` and `timetz(p)` round a value.
+#[test]
+fn values_round_to_typmod_precision() {
+    let context = InputContext::new();
+    let at = PgTimestamp::parse("2026-11-27 12:34:56.789", context).unwrap();
+    assert_eq!(
+        at.adjust_for_typmod(Some(2)).to_string(),
+        "2026-11-27 12:34:56.79"
+    );
+    assert_eq!(
+        at.adjust_for_typmod(Some(0)).to_string(),
+        "2026-11-27 12:34:57"
+    );
+    assert_eq!(at.adjust_for_typmod(Some(6)), at);
+    assert_eq!(at.adjust_for_typmod(None), at);
+    // Half away from 2000-01-01, so half a second before it rounds back a second.
+    let before = PgTimestamp::parse("1999-12-31 23:59:59.5", context).unwrap();
+    assert_eq!(
+        before.adjust_for_typmod(Some(0)).to_string(),
+        "1999-12-31 23:59:59"
+    );
+    assert_eq!(
+        PgTimestamp::INFINITY.adjust_for_typmod(Some(0)),
+        PgTimestamp::INFINITY
+    );
+
+    let instant = PgTimestampTz::parse("2026-11-27 12:34:56.5+02", context).unwrap();
+    assert_eq!(
+        instant.adjust_for_typmod(Some(0)).to_string(),
+        "2026-11-27 10:34:57+00"
+    );
+    assert_eq!(
+        PgTimestampTz::NEG_INFINITY.adjust_for_typmod(Some(0)),
+        PgTimestampTz::NEG_INFINITY
+    );
+
+    let time = PgTime::parse("23:59:59.99", context).unwrap();
+    assert_eq!(time.adjust_for_typmod(Some(1)).to_string(), "24:00:00");
+    assert_eq!(time.adjust_for_typmod(Some(6)), time);
+    let zoned = PgTimeTz::parse("23:59:59.99+02", context).unwrap();
+    assert_eq!(zoned.adjust_for_typmod(Some(1)).to_string(), "24:00:00+02");
+    assert_eq!(zoned.adjust_for_typmod(None), zoned);
 }
 
 /// Zones are equal when `SHOW timezone` names them alike, whatever the spelling they were read

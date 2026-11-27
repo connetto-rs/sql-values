@@ -298,9 +298,18 @@ impl PgTime {
         )
     }
 
-    /// `AdjustTimeForTypmod`, rounding half up to `precision` digits, which never passes
-    /// 24:00:00, as 23:59:59.99 rounds to 24:00:00 at one digit.
-    pub(crate) fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+    /// `AdjustTimeForTypmod`, as `time(p)` rounds the time, half up to `precision` digits.
+    /// A precision of 6 or more, or `None`, keeps the time as it is, and 23:59:59.99 rounds to
+    /// 24:00:00 at one digit.
+    ///
+    /// ```
+    /// use sql_values::postgres::{InputContext, PgTime};
+    ///
+    /// let time = PgTime::parse("23:59:59.99", InputContext::new()).unwrap();
+    /// assert_eq!(time.adjust_for_typmod(Some(1)).to_string(), "24:00:00");
+    /// ```
+    #[must_use]
+    pub fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
         let Some(precision @ 0..6) = precision else {
             return self;
         };
@@ -335,8 +344,9 @@ impl PgTimeTz {
         self.offset
     }
 
-    /// `AdjustTimeForTypmod` of the time of day, keeping the offset.
-    pub(crate) fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+    /// `AdjustTimeForTypmod` of the time of day, keeping the offset, as `timetz(p)` rounds it.
+    #[must_use]
+    pub fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
         Self {
             time: self.time().adjust_for_typmod(precision).0,
             offset: self.offset,
@@ -441,6 +451,22 @@ impl PgTimestamp {
         }
     }
 
+    /// `AdjustTimestampForTypmod`, as `timestamp(p)` rounds the timestamp, half away from
+    /// 2000-01-01 to `precision` digits. An infinity, a precision of 6 or more, or `None` keeps
+    /// the timestamp as it is. No range check follows, as PostgreSQL rounds
+    /// 294276-12-31 23:59:59.5 up to 294277-01-01.
+    ///
+    /// ```
+    /// use sql_values::postgres::{InputContext, PgTimestamp};
+    ///
+    /// let at = PgTimestamp::parse("1999-12-31 23:59:59.5", InputContext::new()).unwrap();
+    /// assert_eq!(at.adjust_for_typmod(Some(0)).to_string(), "1999-12-31 23:59:59");
+    /// ```
+    #[must_use]
+    pub fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+        Self(adjust_timestamp_for_typmod(self.0, precision))
+    }
+
     /// PostgreSQL's `timestamp::timestamptz` with `zone` as the session's `TimeZone`, the local
     /// clock resolved by `DetermineTimeZoneOffset`. A clock the spring-forward gap skips takes
     /// the offset before the change, and a clock the fall-back repeats the offset after it.
@@ -507,6 +533,14 @@ impl PgTimestampTz {
     #[must_use]
     pub const fn is_finite(self) -> bool {
         self.0 != i64::MAX && self.0 != i64::MIN
+    }
+
+    /// `AdjustTimestampForTypmod`, as `timestamptz(p)` rounds the instant, half away from
+    /// 2000-01-01 00:00:00 UTC to `precision` digits. An infinity, a precision of 6 or more, or
+    /// `None` keeps the instant as it is, and no range check follows.
+    #[must_use]
+    pub fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+        Self(adjust_timestamp_for_typmod(self.0, precision))
     }
 
     /// PostgreSQL's `to_timestamp(double precision)`, `float8_timestamptz`, the instant `seconds`
@@ -669,6 +703,23 @@ pub(crate) fn abbreviation_offset(
 /// `IS_VALID_TIMESTAMP`.
 pub(crate) const fn is_valid_timestamp(micros: i64) -> bool {
     MIN_TIMESTAMP <= micros && micros < END_TIMESTAMP
+}
+
+/// `AdjustTimestampForTypmod` on the microseconds PostgreSQL stores.
+fn adjust_timestamp_for_typmod(micros: i64, precision: Option<u8>) -> i64 {
+    let Some(precision @ 0..6) = precision else {
+        return micros;
+    };
+    if micros == i64::MAX || micros == i64::MIN {
+        return micros;
+    }
+    let scale = 10i64.pow(6 - u32::from(precision));
+    let offset = scale / 2;
+    if micros >= 0 {
+        (micros + offset) / scale * scale
+    } else {
+        -((-micros + offset) / scale * scale)
+    }
 }
 
 /// `IS_VALID_DATE`.
