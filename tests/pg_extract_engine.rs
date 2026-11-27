@@ -154,13 +154,12 @@ const ZONES: &[&str] = &[
     "EST5EDT,M3.2.0,M11.1.0",
 ];
 
-/// Instants past jiff's years, for the zones that need no time zone database.
 const FAR_INSTANTS: &[&str] = &[
+    "9999-12-31 12:00:00+00",
+    "9999-12-31 23:59:59.999999+00",
     "294276-12-31 23:59:59.999999+00",
     "200000-06-15 12:00:00+00",
 ];
-
-const RULE_ZONES: &[&str] = &["UTC", "+02:30", "EST5EDT,M3.2.0,M11.1.0"];
 
 /// Intervals of every sign mix, with years beyond what an epoch in microseconds holds, at
 /// every field's limit, and both infinities.
@@ -348,19 +347,14 @@ fn pg18_extracts_every_field_of_timestamptz_in_each_zone() {
         let _: String = diesel::select(set_config("TimeZone", name, false))
             .get_result(&mut conn)
             .expect("set TimeZone");
-        let far: &[&str] = if RULE_ZONES.contains(&name) {
-            FAR_INSTANTS
-        } else {
-            &[]
-        };
         let mut all = Vec::new();
-        for &literal in INSTANTS.iter().chain(far) {
+        for &literal in INSTANTS.iter().chain(FAR_INSTANTS) {
             let at = PgTimestampTz::parse(literal, context()).expect(literal);
             all.extend(cases(
                 "timestamptz",
                 literal,
-                |field| at.extract(field, &zone),
-                |field| at.date_part(field, &zone),
+                |field| Ok(at.extract(field, &zone)),
+                |field| Ok(at.date_part(field, &zone)),
             ));
         }
         compare(&mut conn, all);
@@ -382,7 +376,7 @@ fn pg18_reads_every_unit_spelling() {
         .iter()
         .map(|&spelling| {
             let expected = match ExtractField::parse(spelling) {
-                Some(field) => answer(at.date_part(field, &gmt)),
+                Some(field) => answer(Ok(at.date_part(field, &gmt))),
                 None => Answer::Error(format!(
                     "unit \"{}\" not recognized for type timestamp with time zone",
                     spelling.to_lowercase()

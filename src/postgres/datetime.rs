@@ -45,7 +45,7 @@ pub(crate) const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 const TZDISP_LIMIT: i32 = 16 * 3_600;
 
 /// Why PostgreSQL refuses a date or time, one variant per message it raises, or why this crate
-/// cannot answer for it without more session state or a wider zone database.
+/// cannot answer for it without more session state or within jiff's years.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 #[non_exhaustive]
 pub enum DateTimeError {
@@ -64,8 +64,8 @@ pub enum DateTimeError {
     /// `NaN` given as a timestamp.
     #[error("timestamp cannot be NaN")]
     TimestampCannotBeNaN,
-    /// A value outside jiff's years -9999 to 9999, an infinity included, where jiff's types or
-    /// its time zone database are needed.
+    /// A value outside jiff's years -9999 to 9999, an infinity included, where jiff's types are
+    /// needed.
     #[error("value outside jiff's years -9999 to 9999")]
     OutsideJiffRange,
     /// A literal without an offset read as a `timestamptz` with no time zone in the
@@ -473,9 +473,7 @@ impl PgTimestamp {
     ///
     /// # Errors
     ///
-    /// [`DateTimeError::TimestampOutOfRange`] where the instant leaves PostgreSQL's range, and
-    /// [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about a clock outside
-    /// jiff's years.
+    /// [`DateTimeError::TimestampOutOfRange`] where the instant leaves PostgreSQL's range.
     ///
     /// ```
     /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestamp};
@@ -491,7 +489,7 @@ impl PgTimestamp {
         if !self.is_finite() {
             return Ok(PgTimestampTz(self.0));
         }
-        let offset = local_offset(zone, self.0)?;
+        let offset = local_offset(zone, self.0);
         let instant = self.0 - i64::from(offset) * USECS_PER_SEC;
         if is_valid_timestamp(instant) {
             Ok(PgTimestampTz(instant))
@@ -605,9 +603,7 @@ impl PgTimestampTz {
     ///
     /// # Errors
     ///
-    /// [`DateTimeError::TimestampOutOfRange`] where the local clock leaves PostgreSQL's range,
-    /// and [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about an instant
-    /// outside jiff's years.
+    /// [`DateTimeError::TimestampOutOfRange`] where the local clock leaves PostgreSQL's range.
     ///
     /// ```
     /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz};
@@ -623,7 +619,7 @@ impl PgTimestampTz {
         if !self.is_finite() {
             return Ok(PgTimestamp(self.0));
         }
-        let local = self.0 + i64::from(utc_offset(zone, self.0)?) * USECS_PER_SEC;
+        let local = self.0 + i64::from(utc_offset(zone, self.0)) * USECS_PER_SEC;
         if is_valid_timestamp(local) {
             Ok(PgTimestamp(local))
         } else {
@@ -633,18 +629,14 @@ impl PgTimestampTz {
 
     /// PostgreSQL's `timestamptz::date` with `zone` as the session's `TimeZone`, the local date
     /// of the instant, which PostgreSQL does not range-check.
-    ///
-    /// # Errors
-    ///
-    /// [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about an instant outside
-    /// jiff's years.
-    pub fn to_date(self, zone: &PgTimeZone) -> Result<PgDate, DateTimeError> {
+    #[must_use]
+    pub fn to_date(self, zone: &PgTimeZone) -> PgDate {
         match self.0 {
-            i64::MAX => Ok(PgDate::INFINITY),
-            i64::MIN => Ok(PgDate::NEG_INFINITY),
+            i64::MAX => PgDate::INFINITY,
+            i64::MIN => PgDate::NEG_INFINITY,
             utc => {
-                let local = utc + i64::from(utc_offset(zone, utc)?) * USECS_PER_SEC;
-                Ok(PgDate(narrow_days(local.div_euclid(USECS_PER_DAY))))
+                let local = utc + i64::from(utc_offset(zone, utc)) * USECS_PER_SEC;
+                PgDate(narrow_days(local.div_euclid(USECS_PER_DAY)))
             }
         }
     }
@@ -652,52 +644,32 @@ impl PgTimestampTz {
 
 /// The offset `zone` has at the instant `utc`, microseconds from 2000-01-01 UTC, as
 /// `timestamp2tm` asks `pg_localtime` for it.
-pub(crate) fn utc_offset(zone: &PgTimeZone, utc: i64) -> Result<i32, DateTimeError> {
-    let unix = utc.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS;
-    zone.utc_offset(unix).ok_or(DateTimeError::OutsideJiffRange)
+pub(crate) fn utc_offset(zone: &PgTimeZone, utc: i64) -> i32 {
+    zone.utc_offset(unix_seconds(utc))
 }
 
 /// The offset and the abbreviation `zone` has at the instant `utc`, microseconds from 2000-01-01
 /// UTC, as `timestamp2tm` asks `pg_localtime` for them.
-fn local_time_type(
-    zone: &PgTimeZone,
-    utc: i64,
-) -> Result<(i32, ZoneAbbreviation<'_>), DateTimeError> {
-    let unix = utc.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS;
-    zone.local_time_type(unix)
-        .ok_or(DateTimeError::OutsideJiffRange)
+fn local_time_type(zone: &PgTimeZone, utc: i64) -> (i32, ZoneAbbreviation<'_>) {
+    zone.local_time_type(unix_seconds(utc))
 }
 
 /// The offset `DetermineTimeZoneOffset` gives the local clock `local`, microseconds from
-/// 2000-01-01, in `zone`. A clock jiff cannot place that lies further past PostgreSQL's range
-/// than any of jiff's offsets reaches is [`DateTimeError::TimestampOutOfRange`], as PostgreSQL
-/// finds it after the offset.
-pub(crate) fn local_offset(zone: &PgTimeZone, local: i64) -> Result<i32, DateTimeError> {
-    /// jiff's offsets lie within 25:59:59 of UTC.
-    const JIFF_OFFSET_LIMIT: i64 = 26 * USECS_PER_HOUR;
-    let unix = local.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS;
-    zone.local_offset(unix).ok_or(
-        if (MIN_TIMESTAMP - JIFF_OFFSET_LIMIT..END_TIMESTAMP + JIFF_OFFSET_LIMIT).contains(&local) {
-            DateTimeError::OutsideJiffRange
-        } else {
-            DateTimeError::TimestampOutOfRange
-        },
-    )
+/// 2000-01-01, in `zone`.
+pub(crate) fn local_offset(zone: &PgTimeZone, local: i64) -> i32 {
+    zone.local_offset(unix_seconds(local))
 }
 
 /// `DetermineTimeZoneAbbrevOffset`, the offset the uppercased `abbreviation` had in `zone` at the
 /// local clock `local`, microseconds from 2000-01-01, or the zone's own offset there when the
 /// zone never used it.
-pub(crate) fn abbreviation_offset(
-    zone: &PgTimeZone,
-    abbreviation: &str,
-    local: i64,
-) -> Result<i32, DateTimeError> {
-    let zone_offset = local_offset(zone, local)?;
-    let unix = local.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS - i64::from(zone_offset);
-    Ok(zone
-        .interpret_abbreviation(abbreviation, unix)?
-        .map_or(zone_offset, |meaning| meaning.offset))
+pub(crate) fn abbreviation_offset(zone: &PgTimeZone, abbreviation: &str, local: i64) -> i32 {
+    zone.abbreviation_offset(abbreviation, unix_seconds(local))
+}
+
+/// The whole seconds from 1970 of `micros` microseconds from 2000-01-01, rounded down.
+const fn unix_seconds(micros: i64) -> i64 {
+    micros.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS
 }
 
 /// `IS_VALID_TIMESTAMP`.

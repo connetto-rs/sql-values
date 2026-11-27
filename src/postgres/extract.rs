@@ -4,8 +4,8 @@
 use core::fmt;
 
 use super::{
-    DateTimeError, PgDate, PgFloat8, PgInterval, PgNumeric, PgTime, PgTimeTz, PgTimeZone,
-    PgTimestamp, PgTimestampTz, PgType,
+    PgDate, PgFloat8, PgInterval, PgNumeric, PgTime, PgTimeTz, PgTimeZone, PgTimestamp,
+    PgTimestampTz, PgType,
     datetime::{
         POSTGRES_EPOCH_JDATE, UNIX_TO_POSTGRES_SECS, USECS_PER_DAY, USECS_PER_SEC, date2j, j2date,
         split_clock, timestamp2tm,
@@ -166,8 +166,7 @@ impl fmt::Display for ExtractField {
     }
 }
 
-/// Why PostgreSQL refuses `extract` or `date_part`, or why this crate cannot answer without a
-/// wider zone database.
+/// Why PostgreSQL refuses `extract` or `date_part`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum ExtractError {
     /// A field the input's type does not have.
@@ -181,9 +180,6 @@ pub enum ExtractError {
     /// `date_part` of a date from 294277-01-01, which it casts to `timestamp`.
     #[error("date out of range for timestamp")]
     DateOutOfRangeForTimestamp,
-    /// The local clock of a `timestamptz` in a zone that cannot answer for it.
-    #[error(transparent)]
-    DateTime(#[from] DateTimeError),
 }
 
 /// A field as `extract` computes it in `numeric` or `date_part` in `double precision`, each
@@ -404,42 +400,46 @@ const fn iso_year_week(year: i32, julian: i32) -> (i32, i32) {
     (iso_year, week)
 }
 
-/// `timestamp_part_common`, or `timestamptz_part_common` in `zone`.
+/// `timestamp_part_common`, or `timestamptz_part_common` in `zone`, `None` for a zone field
+/// without a zone.
 fn timestamp_part<P: Part>(
     micros: i64,
     field: ExtractField,
     zone: Option<&PgTimeZone>,
-) -> Result<Option<P>, ExtractError> {
+) -> Option<Option<P>> {
     if micros == i64::MAX || micros == i64::MIN {
-        return Ok(field
-            .grows_with_timestamp()
-            .then(|| P::infinity(micros == i64::MIN)));
+        return Some(
+            field
+                .grows_with_timestamp()
+                .then(|| P::infinity(micros == i64::MIN)),
+        );
     }
     if field == ExtractField::Epoch {
-        return Ok(Some(P::timestamp_epoch(micros)));
+        return Some(Some(P::timestamp_epoch(micros)));
     }
-    let offset = match zone {
-        Some(zone) => utc_offset(zone, micros)?,
-        None => 0,
-    };
+    let offset = zone.map_or(0, |zone| utc_offset(zone, micros));
     let (year, month, day, clock) = timestamp2tm(micros + i64::from(offset) * USECS_PER_SEC);
     let part = match field {
         ExtractField::Julian => P::julian(date2j(year, month, day), clock),
         ExtractField::Timezone if zone.is_some() => P::integer(offset.into()),
         ExtractField::TimezoneHour if zone.is_some() => P::integer((offset / 3_600).into()),
         ExtractField::TimezoneMinute if zone.is_some() => P::integer((offset / 60 % 60).into()),
-        _ => clock_part(field, clock)
-            .or_else(|| calendar_part(field, year, month, day))
-            .ok_or_else(|| {
-                let input_type = if zone.is_some() {
-                    PgType::TimestampTz
-                } else {
-                    PgType::Timestamp
-                };
-                ExtractError::unsupported(field, input_type)
-            })?,
+        _ => clock_part(field, clock).or_else(|| calendar_part(field, year, month, day))?,
     };
-    Ok(Some(part))
+    Some(Some(part))
+}
+
+/// `timestamp_part_common`, which refuses a zone field.
+fn timestamp_without_zone_part<P: Part>(
+    micros: i64,
+    field: ExtractField,
+) -> Result<Option<P>, ExtractError> {
+    timestamp_part(micros, field, None).ok_or(ExtractError::unsupported(field, PgType::Timestamp))
+}
+
+/// `timestamptz_part_common` in `zone`, which has every field.
+fn timestamptz_part<P: Part>(micros: i64, field: ExtractField, zone: &PgTimeZone) -> Option<P> {
+    timestamp_part(micros, field, Some(zone)).expect("a timestamptz has every field")
 }
 
 /// `time_part_common`, or `timetz_part_common` of a time at `offset` seconds east of UTC.
@@ -610,7 +610,7 @@ impl PgTimestamp {
     /// assert_eq!(PgTimestamp::INFINITY.extract(ExtractField::Second).unwrap(), None);
     /// ```
     pub fn extract(self, field: ExtractField) -> Result<Option<PgNumeric>, ExtractError> {
-        timestamp_part(self.pg_micros(), field, None)
+        timestamp_without_zone_part(self.pg_micros(), field)
     }
 
     /// PostgreSQL's `date_part(field, timestamp)`, in `double precision` arithmetic.
@@ -626,7 +626,7 @@ impl PgTimestamp {
     /// assert_eq!(at.date_part(ExtractField::Epoch).unwrap().unwrap().value(), -62135596800.0);
     /// ```
     pub fn date_part(self, field: ExtractField) -> Result<Option<PgFloat8>, ExtractError> {
-        timestamp_part(self.pg_micros(), field, None)
+        timestamp_without_zone_part(self.pg_micros(), field)
     }
 }
 
@@ -635,11 +635,6 @@ impl PgTimestampTz {
     /// the calendar and clock fields of the local clock, the zone fields of the offset at the
     /// instant, and `epoch` of the instant alone.
     ///
-    /// # Errors
-    ///
-    /// [`ExtractError::DateTime`] where an IANA zone is asked about an instant outside jiff's
-    /// years.
-    ///
     /// ```
     /// use sql_values::postgres::{ExtractField, InputContext, PgNumeric, PgTimeZone, PgTimestampTz};
     ///
@@ -647,31 +642,20 @@ impl PgTimestampTz {
     /// {
     ///     let zone = PgTimeZone::parse("America/New_York").unwrap();
     ///     let at = PgTimestampTz::parse("2024-03-10 07:30:00+00", InputContext::new()).unwrap();
-    ///     assert_eq!(at.extract(ExtractField::Hour, &zone).unwrap(), Some(PgNumeric::from(3)));
-    ///     let offset = at.extract(ExtractField::Timezone, &zone).unwrap();
+    ///     assert_eq!(at.extract(ExtractField::Hour, &zone), Some(PgNumeric::from(3)));
+    ///     let offset = at.extract(ExtractField::Timezone, &zone);
     ///     assert_eq!(offset, Some(PgNumeric::from(-14_400)));
     /// }
     /// ```
-    pub fn extract(
-        self,
-        field: ExtractField,
-        zone: &PgTimeZone,
-    ) -> Result<Option<PgNumeric>, ExtractError> {
-        timestamp_part(self.pg_micros(), field, Some(zone))
+    #[must_use]
+    pub fn extract(self, field: ExtractField, zone: &PgTimeZone) -> Option<PgNumeric> {
+        timestamptz_part(self.pg_micros(), field, zone)
     }
 
     /// PostgreSQL's `date_part(field, timestamptz)` with `zone` as the session's `TimeZone`.
-    ///
-    /// # Errors
-    ///
-    /// [`ExtractError::DateTime`] where an IANA zone is asked about an instant outside jiff's
-    /// years.
-    pub fn date_part(
-        self,
-        field: ExtractField,
-        zone: &PgTimeZone,
-    ) -> Result<Option<PgFloat8>, ExtractError> {
-        timestamp_part(self.pg_micros(), field, Some(zone))
+    #[must_use]
+    pub fn date_part(self, field: ExtractField, zone: &PgTimeZone) -> Option<PgFloat8> {
+        timestamptz_part(self.pg_micros(), field, zone)
     }
 }
 

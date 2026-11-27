@@ -5,13 +5,13 @@ use alloc::string::String;
 use core::fmt::Write;
 
 use super::{
-    DateTimeError, MONTHS_PER_YEAR, PgDate, PgTime, PgTimeZone, PgTimestamp, PgTimestampTz,
-    USECS_PER_SEC, date2j, local_time_type, split_clock, timestamp2tm,
+    MONTHS_PER_YEAR, PgDate, PgTime, PgTimeZone, PgTimestamp, PgTimestampTz, USECS_PER_SEC, date2j,
+    local_time_type, split_clock, timestamp2tm,
 };
 use crate::postgres::PgInterval;
 
 /// Why PostgreSQL refuses to format a date or time with `to_char`, one variant per message it
-/// raises, or why this crate cannot answer for it without a wider zone database.
+/// raises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum TemporalFormatError {
     /// A field of a calendar date or a zone in the template of an interval or a time, which
@@ -25,9 +25,6 @@ pub enum TemporalFormatError {
     /// `timestamptz` range.
     #[error("date out of range for timestamp")]
     DateOutOfRangeForTimestamp,
-    /// An IANA zone asked about an instant outside jiff's years.
-    #[error(transparent)]
-    DateTime(#[from] DateTimeError),
 }
 
 const MONTHS: [&str; 12] = [
@@ -830,8 +827,7 @@ impl PgTimestampTz {
     /// # Errors
     ///
     /// [`TemporalFormatError::TimeZoneFormatValueTooLong`] for `TZ` or `tz` of an abbreviation
-    /// longer than 24 bytes, and [`TemporalFormatError::DateTime`] where an IANA zone is asked
-    /// about an instant outside jiff's years.
+    /// longer than 24 bytes.
     ///
     /// ```
     /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz};
@@ -862,7 +858,7 @@ impl PgTimestampTz {
             return Ok(None);
         }
         let utc = self.pg_micros();
-        let (offset, abbreviation) = local_time_type(zone, utc)?;
+        let (offset, abbreviation) = local_time_type(zone, utc);
         let fields = Fields {
             offset,
             zone: Some(abbreviation.as_str()),
@@ -884,7 +880,7 @@ impl PgDate {
     /// [`PgTimestampTz::to_char`].
     ///
     /// ```
-    /// use sql_values::postgres::{DateTimeError, PgDate, PgTimeZone, TemporalFormatError};
+    /// use sql_values::postgres::{PgDate, PgTimeZone, TemporalFormatError};
     ///
     /// let utc = PgTimeZone::parse("UTC0").unwrap();
     /// let leap = PgDate::from_ymd(2024, 2, 29).unwrap();
@@ -898,11 +894,8 @@ impl PgDate {
     /// #[cfg(feature = "tzdb")]
     /// {
     ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
-    ///     let far = PgDate::from_ymd(100_000, 1, 1).unwrap();
-    ///     assert_eq!(
-    ///         far.to_char("YYYY", &rome),
-    ///         Err(TemporalFormatError::DateTime(DateTimeError::OutsideJiffRange)),
-    ///     );
+    ///     let far = PgDate::from_ymd(100_000, 7, 1).unwrap();
+    ///     assert_eq!(far.to_char("YYYY TZ", &rome).unwrap().as_deref(), Some("100000 CEST"));
     /// }
     /// ```
     pub fn to_char(
@@ -911,13 +904,9 @@ impl PgDate {
         zone: &PgTimeZone,
     ) -> Result<Option<String>, TemporalFormatError> {
         // `date2timestamptz_opt_overflow` raises this error for either end of the range.
-        let midnight = self
-            .to_timestamp()
-            .map_err(|_| TemporalFormatError::DateOutOfRangeForTimestamp)?;
-        let instant = midnight.to_timestamptz(zone).map_err(|error| match error {
-            DateTimeError::TimestampOutOfRange => TemporalFormatError::DateOutOfRangeForTimestamp,
-            error => error.into(),
-        })?;
+        let out_of_range = TemporalFormatError::DateOutOfRangeForTimestamp;
+        let midnight = self.to_timestamp().map_err(|_| out_of_range)?;
+        let instant = midnight.to_timestamptz(zone).map_err(|_| out_of_range)?;
         instant.to_char(template, zone)
     }
 }

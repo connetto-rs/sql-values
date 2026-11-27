@@ -250,6 +250,10 @@ const TIMES: &[&str] = &[
     "2026-07-01 12:00",
     "2026-01-15 12:00",
     "9999-12-31 12:00 Europe/Rome",
+    "20000-01-01 12:00 Europe/Rome",
+    "300000-07-01 12:00 Europe/Rome",
+    "300000-07-01 12:00 CEST",
+    "5874897-07-01 12:00 Europe/Rome",
     "4714-11-24 BC 12:00 Europe/Rome",
     "5874898-06-01 12:00 Europe/Rome",
     "5874898-06-01 12:00 MSK",
@@ -327,11 +331,6 @@ fn pg18_reads_every_time_literal_under_each_order() {
         PgTimeTz::parse("07/01/03 12:00", context),
         Err(DateTimeError::NeedsDateOrder)
     );
-    // PostgreSQL places a date past jiff's years, which the crate cannot.
-    assert_eq!(
-        PgTimeTz::parse("20000-01-01 12:00 Europe/Rome", context),
-        Err(DateTimeError::OutsideJiffRange)
-    );
 }
 
 /// `timetz_cmp` on every pair of the time literals that read as `timetz`.
@@ -370,18 +369,6 @@ const ZONES: &[&str] = &[
     "America/Sao_Paulo",
     "America/New_York",
     "Asia/Kolkata",
-    "+02",
-    "-03:30",
-    "EST5EDT,M3.2.0,M11.1.0",
-    "XXX3YYY",
-    "<-03>3<-02>,M10.1.0/0,M2.3.0/0",
-    "ABC3DEF,J60/2,J60/3",
-];
-
-/// The zones of [`ZONES`] that need no time zone database, and so hold over PostgreSQL's whole
-/// range.
-const RULE_ZONES: &[&str] = &[
-    "UTC",
     "+02",
     "-03:30",
     "EST5EDT,M3.2.0,M11.1.0",
@@ -433,8 +420,9 @@ const INSTANTS: &[&str] = &[
     "-infinity",
 ];
 
-/// Instants and clocks past jiff's years, which only the zones that need no database read.
 const FAR: &[&str] = &[
+    "9999-12-31 12:00:00+00",
+    "9999-12-31 23:59:59.999999+00",
     "294276-12-31 23:59:59+00",
     "294276-12-31 22:00:00+00",
     "200000-06-15 12:00:00+00",
@@ -458,13 +446,7 @@ fn pg18_reads_local_timestamptz_in_each_zone() {
     let utc = PgTimeZone::parse("UTC").expect("UTC");
     for (name, zone) in zones() {
         set_timezone(&mut conn, name);
-        let far: Vec<String> = if RULE_ZONES.contains(&name) {
-            FAR.iter()
-                .map(|at| at.trim_end_matches("+00").to_owned())
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let far = FAR.iter().map(|at| at.trim_end_matches("+00").to_owned());
         let mut cases = Vec::new();
         for text in LOCAL_CLOCKS.iter().map(|&at| at.to_owned()).chain(far) {
             let context = InputContext::new().with_time_zone(&zone);
@@ -485,9 +467,8 @@ fn pg18_converts_between_timestamp_timestamptz_and_date_in_each_zone() {
     let utc = PgTimeZone::parse("UTC").expect("UTC");
     for (name, zone) in zones() {
         set_timezone(&mut conn, name);
-        let far: &[&str] = if RULE_ZONES.contains(&name) { FAR } else { &[] };
         let mut cases = Vec::new();
-        for &text in INSTANTS.iter().chain(far) {
+        for &text in INSTANTS.iter().chain(FAR) {
             let at = PgTimestampTz::parse(text, InputContext::new())
                 .unwrap_or_else(|error| panic!("{text:?}: {error}"));
             cases.push((
@@ -496,7 +477,7 @@ fn pg18_converts_between_timestamp_timestamptz_and_date_in_each_zone() {
             ));
             cases.push((
                 format!("{}::timestamptz::date", quoted(text)),
-                worded(at.to_date(&zone)),
+                Ok(at.to_date(&zone).to_string()),
             ));
             let local = text.trim_end_matches("+00").replace("+00 BC", " BC");
             let clock = PgTimestamp::parse(&local, InputContext::new())

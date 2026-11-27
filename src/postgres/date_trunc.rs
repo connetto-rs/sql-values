@@ -201,8 +201,7 @@ impl PgTimestampTz {
     /// # Errors
     ///
     /// [`DateTimeError::TimestampOutOfRange`] where the local clock or the truncated instant
-    /// falls outside PostgreSQL's range, and [`DateTimeError::OutsideJiffRange`] where an IANA
-    /// zone is asked about a clock outside jiff's years.
+    /// falls outside PostgreSQL's range.
     ///
     /// ```
     /// use sql_values::postgres::{DateTruncField, InputContext, PgDate, PgTimeZone, PgTimestampTz};
@@ -234,7 +233,7 @@ impl PgTimestampTz {
         if !self.is_finite() {
             return Ok(self);
         }
-        let offset = utc_offset(zone, self.pg_micros())?;
+        let offset = utc_offset(zone, self.pg_micros());
         let local = self.pg_micros() + i64::from(offset) * USECS_PER_SEC;
         let (year, month, day, clock) = field.truncate_local(local);
         let offset = if field.reaches_midnight() {
@@ -242,7 +241,7 @@ impl PgTimestampTz {
                 return Err(DateTimeError::TimestampOutOfRange);
             }
             let days = i64::from(date2j(year, month, day) - POSTGRES_EPOCH_JDATE);
-            local_offset(zone, days * USECS_PER_DAY + clock)?
+            local_offset(zone, days * USECS_PER_DAY + clock)
         } else {
             offset
         };

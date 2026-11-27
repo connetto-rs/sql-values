@@ -168,18 +168,12 @@ const INSTANTS: &[&str] = &[
     "-infinity",
 ];
 
-/// Instants past jiff's years, which only the zones that need no jiff answer for.
 const FAR_INSTANTS: &[&str] = &[
+    "9999-12-20 00:00:00+00",
+    "9999-12-31 12:00:00+00",
     "200000-06-15 12:00:00+00",
     "294276-12-01 00:00:00+00",
     "294276-12-31 23:59:59.999999+00",
-];
-
-/// The zones of [`ZONES`] that need no time zone database.
-const RULE_ZONES: &[&str] = &[
-    "+02",
-    "EST5EDT,M3.2.0,M11.1.0",
-    "<-03>3<-02>,M10.1.0/0,M2.3.0/0",
 ];
 
 /// Intervals that cross a change by calendar units and by clock units.
@@ -428,12 +422,7 @@ fn pg18_shifts_every_timestamptz_in_each_zone() {
             .execute(&mut conn)
             .expect("set the zone");
         let mut cases = Vec::new();
-        let far: &[&str] = if RULE_ZONES.contains(&name) {
-            FAR_INSTANTS
-        } else {
-            &[]
-        };
-        for &at in INSTANTS.iter().chain(far) {
+        for &at in INSTANTS.iter().chain(FAR_INSTANTS) {
             let instant = PgTimestampTz::parse(at, InputContext::new())
                 .unwrap_or_else(|error| panic!("{at:?}: {error}"));
             for &span in ZONE_SPANS {
@@ -463,22 +452,12 @@ fn pg18_shifts_every_timestamptz_in_each_zone() {
     }
 }
 
-/// An IANA zone asked about a local clock past jiff's years refuses, naming jiff's bound.
+/// A clock past PostgreSQL's range by more than any offset is out of range in an IANA zone, as
+/// PostgreSQL 18.6 answers.
 #[test]
 #[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
-fn shifts_in_an_iana_zone_refuse_past_jiff_years() {
+fn shifts_in_an_iana_zone_refuse_past_postgres_range() {
     let rome = PgTimeZone::parse("Europe/Rome").expect("Europe/Rome");
-    let late = PgTimestampTz::parse("9999-12-20 00:00:00+00", InputContext::new()).expect("late");
-    assert_eq!(
-        interval("1 mon").add_to_timestamptz(late, &rome),
-        Err(ShiftError::OutsideJiffRange)
-    );
-    assert_eq!(
-        ShiftError::OutsideJiffRange.to_string(),
-        "value outside jiff's years -9999 to 9999"
-    );
-    // A clock past PostgreSQL's range by more than any offset is out of range in every zone,
-    // as PostgreSQL 18.6 answers.
     let start = PgTimestampTz::parse("9998-11-05 00:00:00+00", InputContext::new()).expect("9998");
     assert_eq!(
         interval("284278 years 2 mons").add_to_timestamptz(start, &rome),
