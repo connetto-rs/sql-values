@@ -186,7 +186,7 @@ impl PgValue {
     }
 }
 
-/// Refuses a `char(n)` or a `timestamptz`, returning it.
+/// Refuses a `char(n)`, a `timestamptz`, a `time` or a `timetz`, returning it.
 impl TryFrom<CastValue> for PgValue {
     type Error = CastValue;
 
@@ -201,7 +201,10 @@ impl TryFrom<CastValue> for PgValue {
             CastValue::Date(date) => Self::Date(date),
             CastValue::Timestamp(at) => Self::Timestamp(at),
             CastValue::Jsonb(value) => Self::Jsonb(value),
-            CastValue::Bpchar(_) | CastValue::TimestampTz(_) => return Err(value),
+            CastValue::Bpchar(_)
+            | CastValue::TimestampTz(_)
+            | CastValue::Time(_)
+            | CastValue::TimeTz(_) => return Err(value),
         })
     }
 }

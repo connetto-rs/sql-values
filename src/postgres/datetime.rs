@@ -288,6 +288,16 @@ impl PgTime {
             u32::try_from(micro).expect("a microsecond of a second fits u32"),
         )
     }
+
+    /// `AdjustTimeForTypmod`, rounding half up to `precision` digits, which never passes
+    /// 24:00:00, as 23:59:59.99 rounds to 24:00:00 at one digit.
+    pub(crate) fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+        let Some(precision @ 0..6) = precision else {
+            return self;
+        };
+        let scale = 10i64.pow(6 - u32::from(precision));
+        Self((self.0 + scale / 2) / scale * scale)
+    }
 }
 
 impl PgTimeTz {
@@ -314,6 +324,14 @@ impl PgTimeTz {
     #[must_use]
     pub const fn offset(self) -> i32 {
         self.offset
+    }
+
+    /// `AdjustTimeForTypmod` of the time of day, keeping the offset.
+    pub(crate) fn adjust_for_typmod(self, precision: Option<u8>) -> Self {
+        Self {
+            time: self.time().adjust_for_typmod(precision).0,
+            offset: self.offset,
+        }
     }
 
     /// `timetz_cmp_internal`'s keys, the time at UTC and then PostgreSQL's zone, seconds west.

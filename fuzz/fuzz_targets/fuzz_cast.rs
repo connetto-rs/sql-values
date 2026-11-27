@@ -13,7 +13,7 @@ fn char_length(len: usize) -> usize {
 /// The target the input's length picks, so no input byte is spent choosing one.
 fn target(len: usize) -> CastTarget {
     let length = CharLength::new(char_length(len));
-    match len % 15 {
+    match len % 17 {
         0 => CastTarget::Boolean,
         1 => CastTarget::Smallint,
         2 => CastTarget::Integer,
@@ -27,7 +27,9 @@ fn target(len: usize) -> CastTarget {
         10 => CastTarget::Date,
         11 => CastTarget::Timestamp(u8::try_from(len % 8).ok()),
         12 => CastTarget::TimestampTz(u8::try_from(len % 8).ok()),
-        13 => CastTarget::Jsonb,
+        13 => CastTarget::Time(u8::try_from(len % 8).ok()),
+        14 => CastTarget::TimeTz(u8::try_from(len % 8).ok()),
+        15 => CastTarget::Jsonb,
         _ => CastTarget::Bpchar(None),
     }
 }
