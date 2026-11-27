@@ -506,7 +506,7 @@ impl Field {
                 let magnitude = fields.offset.unsigned_abs();
                 out.push(offset_sign(fields.offset));
                 number(out, (magnitude / 3_600).into(), width(2));
-                if magnitude % 3_600 != 0 {
+                if !magnitude.is_multiple_of(3_600) {
                     out.push(':');
                     number(out, (magnitude % 3_600 / 60).into(), 2);
                 }
