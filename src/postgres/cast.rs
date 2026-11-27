@@ -586,15 +586,14 @@ fn cast_non_null(value: CastValue, target: CastTarget) -> Result<CastValue, Cast
             let at = date
                 .to_timestamp()
                 .map_err(|_| CastError::DateOutOfRangeForTimestamp)?;
-            Ok(timestamp(at, precision))
+            Ok(CastValue::Timestamp(at.adjust_for_typmod(precision)))
         }
         (CastValue::Timestamp(at), CastTarget::Date) => Ok(CastValue::Date(at.date())),
         (CastValue::Timestamp(at), CastTarget::Timestamp(precision)) => {
-            Ok(timestamp(at, precision))
+            Ok(CastValue::Timestamp(at.adjust_for_typmod(precision)))
         }
         (CastValue::TimestampTz(at), CastTarget::TimestampTz(precision)) => {
-            let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
-            Ok(CastValue::TimestampTz(PgTimestampTz::from_stored(micros)))
+            Ok(CastValue::TimestampTz(at.adjust_for_typmod(precision)))
         }
         (CastValue::Time(time), CastTarget::Time(precision)) => {
             Ok(CastValue::Time(time.adjust_for_typmod(precision)))
@@ -650,12 +649,6 @@ fn integer(value: i64, target: CastTarget) -> Result<CastValue, CastError> {
     IntegerType::try_from(target)
         .expect("a target taking an integer is numeric or an integer type")
         .value(value)
-}
-
-/// `timestamp_scale`, the timestamp rounded to the target's precision.
-fn timestamp(at: PgTimestamp, precision: Option<u8>) -> CastValue {
-    let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
-    CastValue::Timestamp(PgTimestamp::from_stored(micros))
 }
 
 /// `numeric_in`, its refusal as the cast error.
@@ -775,16 +768,12 @@ fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
         CastTarget::Date => PgDate::parse(text, InputContext::new())
             .map(CastValue::Date)
             .map_err(datetime_error),
-        CastTarget::Timestamp(precision) => {
-            let at = PgTimestamp::parse(text, InputContext::new()).map_err(datetime_error)?;
-            let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
-            Ok(CastValue::Timestamp(PgTimestamp::from_stored(micros)))
-        }
-        CastTarget::TimestampTz(precision) => {
-            let at = PgTimestampTz::parse(text, InputContext::new()).map_err(datetime_error)?;
-            let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
-            Ok(CastValue::TimestampTz(PgTimestampTz::from_stored(micros)))
-        }
+        CastTarget::Timestamp(precision) => PgTimestamp::parse(text, InputContext::new())
+            .map(|at| CastValue::Timestamp(at.adjust_for_typmod(precision)))
+            .map_err(datetime_error),
+        CastTarget::TimestampTz(precision) => PgTimestampTz::parse(text, InputContext::new())
+            .map(|at| CastValue::TimestampTz(at.adjust_for_typmod(precision)))
+            .map_err(datetime_error),
         CastTarget::Time(precision) => PgTime::parse(text, InputContext::new())
             .map(|time| CastValue::Time(time.adjust_for_typmod(precision)))
             .map_err(datetime_error),
@@ -938,25 +927,6 @@ fn int_in(text: &str, integer: IntegerType) -> Result<i64, IntInputError> {
         .ok()
         .filter(|value| integer.range().contains(value))
         .ok_or(IntInputError::Range)
-}
-
-/// `AdjustTimestampForTypmod`, rounding a finite timestamp half away from 2000-01-01 to
-/// `precision` digits, with no range check after, as PostgreSQL rounds the last second of
-/// 294276 up to 294277-01-01.
-fn adjust_timestamp_for_typmod(micros: i64, precision: Option<u8>) -> i64 {
-    let Some(precision @ 0..6) = precision else {
-        return micros;
-    };
-    if micros == i64::MAX || micros == i64::MIN {
-        return micros;
-    }
-    let scale = 10i64.pow(6 - u32::from(precision));
-    let offset = scale / 2;
-    if micros >= 0 {
-        (micros + offset) / scale * scale
-    } else {
-        -((-micros + offset) / scale * scale)
-    }
 }
 
 /// The cast error of a refusal by a date or time input function.
