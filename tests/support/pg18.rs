@@ -132,6 +132,8 @@ pub fn pg_error(message: &str, detail: Option<&str>) -> CastError {
         PgType::Date,
         PgType::Timestamp,
         PgType::TimestampTz,
+        PgType::Time,
+        PgType::TimeTz,
         PgType::Jsonb,
     ];
     let mut errors = vec![

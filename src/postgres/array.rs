@@ -528,7 +528,13 @@ fn into_value(value: CastValue) -> Result<PgValue, CastError> {
 /// `Ok` when the crate holds `element` as an array element, `CastError::Unsupported` when it
 /// does not.
 fn supported(element: CastTarget) -> Result<(), CastError> {
-    if matches!(element, CastTarget::Bpchar(_) | CastTarget::TimestampTz(_)) {
+    if matches!(
+        element,
+        CastTarget::Bpchar(_)
+            | CastTarget::TimestampTz(_)
+            | CastTarget::Time(_)
+            | CastTarget::TimeTz(_)
+    ) {
         Err(CastError::Unsupported)
     } else {
         Ok(())

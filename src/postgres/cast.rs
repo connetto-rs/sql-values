@@ -7,7 +7,7 @@ use core::fmt;
 
 use super::{
     bpchar::PgBpchar,
-    datetime::{DateTimeError, InputContext, PgDate, PgTimestamp, PgTimestampTz},
+    datetime::{DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimestamp, PgTimestampTz},
     integer::IntegerType,
     jsonb::{JsonbError, JsonbKind, PgJsonb},
     numeric::{NumericError, NumericTypmod, PgNumeric},
@@ -50,6 +50,10 @@ pub enum CastTarget {
     Timestamp(Option<u8>),
     /// `timestamptz`, or `timestamptz(p)` with a precision, where one above 6 is 6.
     TimestampTz(Option<u8>),
+    /// `time`, or `time(p)` with a precision, where one above 6 is 6.
+    Time(Option<u8>),
+    /// `timetz`, or `timetz(p)` with a precision, where one above 6 is 6.
+    TimeTz(Option<u8>),
     /// `jsonb`.
     Jsonb,
 }
@@ -176,6 +180,8 @@ impl CastTarget {
             Self::Date => PgType::Date,
             Self::Timestamp(_) => PgType::Timestamp,
             Self::TimestampTz(_) => PgType::TimestampTz,
+            Self::Time(_) => PgType::Time,
+            Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb => PgType::Jsonb,
         }
     }
@@ -206,6 +212,10 @@ pub enum CastValue {
     Timestamp(PgTimestamp),
     /// A `timestamptz`, printed as under `TimeZone` `UTC`.
     TimestampTz(PgTimestampTz),
+    /// A `time`.
+    Time(PgTime),
+    /// A `timetz`, printed with the offset it holds.
+    TimeTz(PgTimeTz),
     /// A `jsonb`.
     Jsonb(PgJsonb),
 }
@@ -290,11 +300,12 @@ pub enum CastError {
     /// A dimension bound `i32` cannot hold.
     #[error("array bound is out of integer range")]
     ArrayBoundOutOfRange,
-    /// A literal or cast this crate does not model. A date or timestamp is read only in the
-    /// spellings [`PgDate::parse`] and [`PgTimestamp::parse`] read, and a `timestamptz` only
-    /// with its offset, since without one the session's `TimeZone` decides the instant. For the
-    /// same reason no cast between `timestamptz` and `date`, `timestamp` or a character type is
-    /// modelled.
+    /// A literal or cast this crate does not model. A date, timestamp or time is read only in
+    /// the spellings [`PgDate::parse`], [`PgTimestamp::parse`] and [`PgTime::parse`] read, and a
+    /// `timestamptz` or `timetz` only with its offset, since without one the session's
+    /// `TimeZone` decides it. For the same reason no cast from `timestamptz` to `date`,
+    /// `timestamp`, `time`, `timetz` or a character type, from `time` to `timetz`, or from
+    /// `date` or `timestamp` to `timestamptz` is modelled.
     #[error("cast not modelled")]
     Unsupported,
 }
@@ -372,7 +383,7 @@ pub enum CastError {
 pub fn cast_literal(literal: Literal<'_>, target: CastTarget) -> Result<CastValue, CastError> {
     match literal {
         Literal::Quoted(text) => cast_quoted(text, target),
-        Literal::Number(text) => cast_non_jsonb(number_constant(text)?, target),
+        Literal::Number(text) => cast_non_null(number_constant(text)?, target),
     }
 }
 
@@ -415,10 +426,11 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 /// coercion does, and a value cast to a character type is printed by its type's output function,
 /// `boolean` as `true` or `false`. Between the other types the cast is the function `pg_cast`
 /// names, `int4_bool`, `bool_int4`, the integer narrowings, `int*_numeric`, `numeric_int*`,
-/// `date_timestamp`, `timestamp_date`, `jsonb_bool`, `jsonb_numeric` and `jsonb_int*`, the last
-/// three followed by `numeric_int*`. A `jsonb` `null` cast to `boolean`, `numeric` or an integer
-/// type is `NULL`, the one cast giving `NULL`. The length coercion of the target's modifier
-/// follows, and a pair `pg_cast` has no cast for raises [`CastError::CannotCast`].
+/// `date_timestamp`, `timestamp_date`, `timestamp_time`, `timetz_time`, `jsonb_bool`,
+/// `jsonb_numeric` and `jsonb_int*`, the last three followed by `numeric_int*`. A `jsonb` `null`
+/// cast to `boolean`, `numeric` or an integer type and an infinite `timestamp` cast to `time` are
+/// `NULL`, the only casts giving `NULL`. The length coercion of the target's modifier follows,
+/// and a pair `pg_cast` has no cast for raises [`CastError::CannotCast`].
 ///
 /// # Errors
 ///
@@ -427,7 +439,8 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 ///
 /// ```
 /// use sql_values::postgres::{
-///     CastError, CastTarget, CastValue, JsonbKind, PgJsonb, PgNumeric, PgType, cast_value,
+///     CastError, CastTarget, CastValue, JsonbKind, PgJsonb, PgNumeric, PgTime, PgTimestamp,
+///     PgType, cast_value,
 /// };
 ///
 /// let cast = |value, target| {
@@ -463,11 +476,20 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 ///     cast(jsonb("[1]"), CastTarget::Numeric(None)),
 ///     Err(CastError::CannotCastJsonb { from: JsonbKind::Array, to: PgType::Numeric }),
 /// );
+///
+/// let late = PgTime::from_hms_micro(23, 59, 59, 990_000).unwrap();
+/// assert_eq!(cast(CastValue::Time(late), CastTarget::Time(Some(1))), some("24:00:00"));
+/// let endless = CastValue::Timestamp(PgTimestamp::INFINITY);
+/// assert_eq!(cast(endless, CastTarget::Time(None)), Ok(None));
 /// ```
 pub fn cast_value(value: CastValue, target: CastTarget) -> Result<Option<CastValue>, CastError> {
-    match value {
-        CastValue::Jsonb(value) => cast_jsonb(value, target),
-        value => cast_non_jsonb(value, target).map(Some),
+    match (value, target) {
+        (CastValue::Jsonb(value), _) => cast_jsonb(value, target),
+        // `timestamp_time`, which gives `NULL` for an infinity.
+        (CastValue::Timestamp(at), CastTarget::Time(precision)) => Ok(at
+            .time()
+            .map(|time| CastValue::Time(time.adjust_for_typmod(precision)))),
+        (value, _) => cast_non_null(value, target).map(Some),
     }
 }
 
@@ -486,23 +508,26 @@ fn cast_jsonb(value: PgJsonb, target: CastTarget) -> Result<Option<CastValue>, C
         | CastTarget::Numeric(_) => value
             .into_numeric()
             .map_err(cannot_cast)?
-            .map(|number| cast_non_jsonb(CastValue::Numeric(number), target))
+            .map(|number| cast_non_null(CastValue::Numeric(number), target))
             .transpose(),
         CastTarget::Text | CastTarget::Varchar(_) | CastTarget::Bpchar(_) => {
             Ok(Some(character(&value.to_string(), target)))
         }
         CastTarget::Jsonb => Ok(Some(CastValue::Jsonb(value))),
-        CastTarget::Date | CastTarget::Timestamp(_) | CastTarget::TimestampTz(_) => {
-            Err(CastError::CannotCast {
-                from: PgType::Jsonb,
-                to,
-            })
-        }
+        CastTarget::Date
+        | CastTarget::Timestamp(_)
+        | CastTarget::TimestampTz(_)
+        | CastTarget::Time(_)
+        | CastTarget::TimeTz(_) => Err(CastError::CannotCast {
+            from: PgType::Jsonb,
+            to,
+        }),
     }
 }
 
-/// The cast of a value other than a `jsonb`, which never gives `NULL`.
-fn cast_non_jsonb(value: CastValue, target: CastTarget) -> Result<CastValue, CastError> {
+/// The cast of a value other than a `jsonb`, and other than a `timestamp` cast to `time`, which
+/// never gives `NULL`.
+fn cast_non_null(value: CastValue, target: CastTarget) -> Result<CastValue, CastError> {
     let cannot_cast = CastError::CannotCast {
         from: value.pg_type(),
         to: target.pg_type(),
@@ -518,13 +543,14 @@ fn cast_non_jsonb(value: CastValue, target: CastTarget) -> Result<CastValue, Cas
             CastValue::TimestampTz(_),
             CastTarget::Date
             | CastTarget::Timestamp(_)
+            | CastTarget::Time(_)
+            | CastTarget::TimeTz(_)
             | CastTarget::Text
             | CastTarget::Varchar(_)
             | CastTarget::Bpchar(_),
         )
-        | (CastValue::Date(_) | CastValue::Timestamp(_), CastTarget::TimestampTz(_)) => {
-            Err(CastError::Unsupported)
-        }
+        | (CastValue::Date(_) | CastValue::Timestamp(_), CastTarget::TimestampTz(_))
+        | (CastValue::Time(_), CastTarget::TimeTz(_)) => Err(CastError::Unsupported),
         // `booltext`.
         (
             CastValue::Boolean(value),
@@ -567,6 +593,16 @@ fn cast_non_jsonb(value: CastValue, target: CastTarget) -> Result<CastValue, Cas
             let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
             Ok(CastValue::TimestampTz(PgTimestampTz::from_stored(micros)))
         }
+        (CastValue::Time(time), CastTarget::Time(precision)) => {
+            Ok(CastValue::Time(time.adjust_for_typmod(precision)))
+        }
+        // `timetz_time`, dropping the offset.
+        (CastValue::TimeTz(time), CastTarget::Time(precision)) => {
+            Ok(CastValue::Time(time.time().adjust_for_typmod(precision)))
+        }
+        (CastValue::TimeTz(time), CastTarget::TimeTz(precision)) => {
+            Ok(CastValue::TimeTz(time.adjust_for_typmod(precision)))
+        }
         _ => Err(cannot_cast),
     }
 }
@@ -595,6 +631,8 @@ impl CastValue {
             Self::Date(_) => PgType::Date,
             Self::Timestamp(_) => PgType::Timestamp,
             Self::TimestampTz(_) => PgType::TimestampTz,
+            Self::Time(_) => PgType::Time,
+            Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb(_) => PgType::Jsonb,
         }
     }
@@ -744,6 +782,12 @@ fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
             let micros = adjust_timestamp_for_typmod(at.pg_micros(), precision);
             Ok(CastValue::TimestampTz(PgTimestampTz::from_stored(micros)))
         }
+        CastTarget::Time(precision) => PgTime::parse(text, InputContext::new())
+            .map(|time| CastValue::Time(time.adjust_for_typmod(precision)))
+            .map_err(datetime_error),
+        CastTarget::TimeTz(precision) => PgTimeTz::parse(text, InputContext::new())
+            .map(|time| CastValue::TimeTz(time.adjust_for_typmod(precision)))
+            .map_err(datetime_error),
         CastTarget::Jsonb => PgJsonb::parse(text)
             .map(CastValue::Jsonb)
             .map_err(jsonb_input_error),
@@ -943,6 +987,8 @@ impl fmt::Display for CastValue {
             Self::Date(date) => write!(f, "{date}"),
             Self::Timestamp(at) => write!(f, "{at}"),
             Self::TimestampTz(at) => write!(f, "{at}"),
+            Self::Time(time) => write!(f, "{time}"),
+            Self::TimeTz(time) => write!(f, "{time}"),
             Self::Jsonb(value) => write!(f, "{value}"),
         }
     }

@@ -53,6 +53,15 @@ fn targets() -> Vec<(&'static str, CastTarget)> {
         ("timestamp(6)", CastTarget::Timestamp(Some(6))),
         ("timestamptz", CastTarget::TimestampTz(None)),
         ("timestamptz(0)", CastTarget::TimestampTz(Some(0))),
+        ("time", CastTarget::Time(None)),
+        ("time(0)", CastTarget::Time(Some(0))),
+        ("time(1)", CastTarget::Time(Some(1))),
+        ("time(3)", CastTarget::Time(Some(3))),
+        ("time(6)", CastTarget::Time(Some(6))),
+        ("time(9)", CastTarget::Time(Some(9))),
+        ("timetz", CastTarget::TimeTz(None)),
+        ("timetz(0)", CastTarget::TimeTz(Some(0))),
+        ("timetz(1)", CastTarget::TimeTz(Some(1))),
         ("jsonb", CastTarget::Jsonb),
     ]
 }
@@ -298,6 +307,19 @@ const QUOTED: &[&str] = &[
     "4714-11-24 00:30 BC CET",
     "294276-12-31 23:30 CET",
     "294277-01-01 00:30 CET",
+    "12:34:56.789",
+    "12:34:56.75",
+    "12:34:56.25",
+    "12:34:56.123456",
+    "23:59:59.99",
+    "23:59:59.5",
+    "23:59:59.9999995",
+    "00:00:00.4",
+    "24:00:00",
+    "allballs",
+    "23:59:59.99+02",
+    "12:00:00.05-05:30",
+    "00:00:00.5+15:59",
     // jsonb
     r#"{"b": [1, 2.50, null], "a": {"y": true, "x": false}, "a": "last"}"#,
     r#" [ "\u00e9\ud83d\ude00\n\/", -0.0, 1E+2, 0e0 ] "#,
@@ -549,6 +571,12 @@ const VALUES: &[(&str, &str)] = &[
     ("4714-11-24 00:00:00 BC", "timestamp"),
     ("infinity", "timestamp"),
     ("-infinity", "timestamp"),
+    ("12:34:56.789", "time"),
+    ("23:59:59.99", "time"),
+    ("24:00:00", "time"),
+    ("00:00:00", "time"),
+    ("23:59:59.99+02", "timetz"),
+    ("12:00:00.05-05:30", "timetz"),
     ("2026-01-01 10:00:00.5+02", "timestamptz"),
     ("infinity", "timestamptz"),
     ("null", "jsonb"),
@@ -962,7 +990,12 @@ fn pg18_prints_and_converts_every_value() {
             mismatches.push(format!("{sql}: the cast value does not come back"));
         }
     }
-    for (text, type_name) in [("ab", "char(4)"), ("2026-01-01 00:00+00", "timestamptz")] {
+    for (text, type_name) in [
+        ("ab", "char(4)"),
+        ("2026-01-01 00:00+00", "timestamptz"),
+        ("12:00", "time"),
+        ("12:00+01", "timetz"),
+    ] {
         let cast = cast_literal(Literal::Quoted(text), target(type_name))
             .unwrap_or_else(|error| panic!("{text:?}::{type_name}: {error}"));
         match PgValue::try_from(cast.clone()) {
