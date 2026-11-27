@@ -7,6 +7,7 @@ mod decode;
 mod input;
 #[cfg(feature = "jiff")]
 mod jiff_conversions;
+mod to_char;
 pub(crate) mod tokens;
 
 use core::{cmp::Ordering, fmt};
