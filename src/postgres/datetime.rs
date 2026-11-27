@@ -15,7 +15,10 @@ pub use arithmetic::DateArithmeticError;
 pub use decode::DateOrder;
 pub use input::{InputContext, parse_date, parse_time, parse_timestamp, parse_timestamp_tz};
 
-use super::{PgTimeZone, PgType};
+use super::{
+    PgTimeZone, PgType,
+    float::{int_to_f64, round_ties_even, truncate_to_i64},
+};
 
 pub(crate) const USECS_PER_SEC: i64 = 1_000_000;
 pub(crate) const USECS_PER_MINUTE: i64 = 60_000_000;
@@ -55,6 +58,9 @@ pub enum DateTimeError {
     /// A timestamp before 4714-11-24 BC or from 294277-01-01.
     #[error("timestamp out of range")]
     TimestampOutOfRange,
+    /// `NaN` given as a timestamp.
+    #[error("timestamp cannot be NaN")]
+    TimestampCannotBeNaN,
     /// A value outside jiff's years -9999 to 9999, an infinity included, where jiff's types or
     /// its time zone database are needed.
     #[error("value outside jiff's years -9999 to 9999")]
@@ -498,6 +504,63 @@ impl PgTimestampTz {
     #[must_use]
     pub const fn is_finite(self) -> bool {
         self.0 != i64::MAX && self.0 != i64::MIN
+    }
+
+    /// PostgreSQL's `to_timestamp(double precision)`, `float8_timestamptz`, the instant `seconds`
+    /// after 1970-01-01 00:00:00 UTC, rounded to the microsecond with ties to even after the
+    /// shift to 2000-01-01, and an infinity the like infinite instant.
+    ///
+    /// # Errors
+    ///
+    /// [`DateTimeError::TimestampCannotBeNaN`] for `NaN`, and
+    /// [`DateTimeError::TimestampOutOfRange`] for seconds before 4714-11-24 BC or from
+    /// 294277-01-01.
+    ///
+    /// ```
+    /// use sql_values::postgres::{DateTimeError, PgTimestampTz};
+    ///
+    /// let at = |seconds| PgTimestampTz::from_unix_seconds(seconds).unwrap().to_string();
+    /// assert_eq!(at(-1.25), "1969-12-31 23:59:58.75+00");
+    /// // 0.0078125 and 0.0234375 lie exactly between two microseconds.
+    /// assert_eq!(at(0.0078125), "1970-01-01 00:00:00.007812+00");
+    /// assert_eq!(at(0.0234375), "1970-01-01 00:00:00.023438+00");
+    /// assert_eq!(at(9_224_318_015_999.0), "294276-12-31 23:59:58.999552+00");
+    /// assert_eq!(
+    ///     PgTimestampTz::from_unix_seconds(f64::NEG_INFINITY),
+    ///     Ok(PgTimestampTz::NEG_INFINITY)
+    /// );
+    /// assert_eq!(
+    ///     PgTimestampTz::from_unix_seconds(f64::NAN),
+    ///     Err(DateTimeError::TimestampCannotBeNaN)
+    /// );
+    /// assert_eq!(
+    ///     PgTimestampTz::from_unix_seconds(9_224_318_016_000.0),
+    ///     Err(DateTimeError::TimestampOutOfRange)
+    /// );
+    /// ```
+    pub fn from_unix_seconds(seconds: f64) -> Result<Self, DateTimeError> {
+        if seconds.is_nan() {
+            return Err(DateTimeError::TimestampCannotBeNaN);
+        }
+        if seconds.is_infinite() {
+            return Ok(if seconds < 0.0 {
+                Self::NEG_INFINITY
+            } else {
+                Self::INFINITY
+            });
+        }
+        let first = int_to_f64(MIN_TIMESTAMP / USECS_PER_SEC + UNIX_TO_POSTGRES_SECS);
+        let end = int_to_f64(END_TIMESTAMP / USECS_PER_SEC + UNIX_TO_POSTGRES_SECS);
+        if !(first..end).contains(&seconds) {
+            return Err(DateTimeError::TimestampOutOfRange);
+        }
+        // Two roundings in PostgreSQL's order, never one fused multiply-add.
+        let shifted = seconds - int_to_f64(UNIX_TO_POSTGRES_SECS);
+        let micros = truncate_to_i64(round_ties_even(shifted * int_to_f64(USECS_PER_SEC)));
+        // Every step is monotonic and the bounds map to MIN_TIMESTAMP and below END_TIMESTAMP,
+        // so the result needs none of PostgreSQL's second range check.
+        debug_assert!(is_valid_timestamp(micros), "{seconds} left the range");
+        Ok(Self(micros))
     }
 
     /// PostgreSQL's `timestamptz::timestamp` with `zone` as the session's `TimeZone`, the local

@@ -965,7 +965,8 @@ fn datetime_error(error: DateTimeError) -> CastError {
         DateTimeError::TimestampOutOfRange => CastError::TimestampOutOfRange,
 
         DateTimeError::InvalidInputSyntax(pg_type) => CastError::InvalidInputSyntax(pg_type),
-        DateTimeError::OutsideJiffRange
+        DateTimeError::TimestampCannotBeNaN
+        | DateTimeError::OutsideJiffRange
         | DateTimeError::NeedsTimeZone
         | DateTimeError::NeedsDateOrder
         | DateTimeError::NeedsCurrentTime
