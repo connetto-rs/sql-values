@@ -6,7 +6,7 @@ use super::datetime::{
     is_valid_julian, j2date, local_offset, timestamp2tm, tm2timestamp,
     tokens::{
         DTK_CENTURY, DTK_DAY, DTK_DECADE, DTK_HOUR, DTK_MICROSEC, DTK_MILLENNIUM, DTK_MILLISEC,
-        DTK_MINUTE, DTK_MONTH, DTK_QUARTER, DTK_SECOND, DTK_WEEK, DTK_YEAR, TOKEN_MAX_LEN, UNITS,
+        DTK_MINUTE, DTK_MONTH, DTK_QUARTER, DTK_SECOND, DTK_WEEK, DTK_YEAR, UNITS,
     },
     utc_offset,
 };
@@ -76,12 +76,7 @@ impl DateTruncField {
     /// assert_eq!(DateTruncField::parse("timezone"), Err(DateTruncError::UnitNotSupported));
     /// ```
     pub fn parse(unit: &str) -> Result<Self, DateTruncError> {
-        let mut lowered = [0; TOKEN_MAX_LEN];
-        let prefix = &unit.as_bytes()[..unit.len().min(TOKEN_MAX_LEN)];
-        for (low, byte) in lowered.iter_mut().zip(prefix) {
-            *low = byte.to_ascii_lowercase();
-        }
-        match decode_units(&lowered[..prefix.len()]) {
+        match decode_units(unit) {
             (UNITS, DTK_MICROSEC) => Ok(Self::Microseconds),
             (UNITS, DTK_MILLISEC) => Ok(Self::Milliseconds),
             (UNITS, DTK_SECOND) => Ok(Self::Second),

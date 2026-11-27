@@ -124,6 +124,8 @@ pub enum PgType {
     TimeTz,
     /// `jsonb`.
     Jsonb,
+    /// `interval`.
+    Interval,
 }
 
 impl fmt::Display for PgType {
@@ -150,6 +152,7 @@ impl PgType {
             Self::Time => "time without time zone",
             Self::TimeTz => "time with time zone",
             Self::Jsonb => "jsonb",
+            Self::Interval => "interval",
         }
     }
 

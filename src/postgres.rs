@@ -7,6 +7,7 @@ mod bytea;
 mod cast;
 mod date_trunc;
 mod datetime;
+mod extract;
 mod float;
 mod float8;
 mod integer;
@@ -28,6 +29,7 @@ pub use datetime::{
     DateArithmeticError, DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz,
     PgTimestamp, PgTimestampTz, parse_date, parse_time, parse_timestamp, parse_timestamp_tz,
 };
+pub use extract::{ExtractError, ExtractField};
 pub use float8::{Float8Error, PgFloat8};
 pub use integer::IntegerType;
 pub use interval::{

@@ -28,7 +28,7 @@ pub(crate) const MONTHS_PER_YEAR: i32 = 12;
 /// `POSTGRES_EPOCH_JDATE`, the Julian day of 2000-01-01.
 pub(crate) const POSTGRES_EPOCH_JDATE: i32 = 2_451_545;
 /// Seconds from 1970-01-01, `UNIX_EPOCH_JDATE`, to 2000-01-01.
-const UNIX_TO_POSTGRES_SECS: i64 = 946_684_800;
+pub(crate) const UNIX_TO_POSTGRES_SECS: i64 = 946_684_800;
 /// `DATE_END_JULIAN`, the Julian day of 5874898-01-01, past the last date.
 const DATE_END_JULIAN: i32 = 2_147_483_494;
 /// `TIMESTAMP_END_JULIAN - POSTGRES_EPOCH_JDATE`, the days from 2000-01-01 to 294277-01-01, the
@@ -757,8 +757,9 @@ fn narrow_u8(field: i64) -> u8 {
     u8::try_from(field).expect("a calendar or clock field fits u8")
 }
 
-/// The hour, minute, second and microsecond of a clock up to 24:00:00.
-const fn split_clock(micros: i64) -> (i64, i64, i64, i64) {
+/// The hour, minute, second and microsecond of `micros`, each truncated toward zero, as
+/// `time2tm` splits a clock up to 24:00:00 and `interval2itm` an interval's time.
+pub(crate) const fn split_clock(micros: i64) -> (i64, i64, i64, i64) {
     (
         micros / USECS_PER_HOUR,
         micros % USECS_PER_HOUR / USECS_PER_MINUTE,

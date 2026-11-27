@@ -10,8 +10,9 @@ use crate::postgres::datetime::tokens::{
     DTK_DAY, DTK_DECADE, DTK_DELTA, DTK_EARLY, DTK_HOUR, DTK_LATE, DTK_MICROSEC, DTK_MILLENNIUM,
     DTK_MILLISEC, DTK_MINUTE, DTK_MONTH, DTK_QUARTER, DTK_SECOND, DTK_TIME_M, DTK_TZ, DTK_TZ_HOUR,
     DTK_TZ_MINUTE, DTK_WEEK, DTK_YEAR, FieldType, HOUR, IGNORE_DTF, MICROSECOND, MILLENNIUM,
-    MILLISECOND, MINUTE, MONTH, RESERV, SECOND, Tokens, UNITS, UNKNOWN_FIELD, WEEK, YEAR, dtk_m,
-    lookup, parse_date_time, parse_fraction, parse_fractional_second, strtoint, strtoll,
+    MILLISECOND, MINUTE, MONTH, RESERV, SECOND, TOKEN_MAX_LEN, Tokens, UNITS, UNKNOWN_FIELD, WEEK,
+    YEAR, dtk_m, lookup, parse_date_time, parse_fraction, parse_fractional_second, strtoint,
+    strtoll,
 };
 use crate::postgres::float::{
     fits_in_i32, fits_in_i64, int_to_f64, round_ties_even, truncate_to_i32, truncate_to_i64,
@@ -152,10 +153,28 @@ fn decode_word(word: &[u8]) -> (i32, i32) {
         .unwrap_or((UNKNOWN_FIELD, 0))
 }
 
-/// `DecodeUnits`, the token type and value of a lowercased unit word, without the
-/// `DecodeSpecial` fallback `date_trunc` does not take.
-pub(crate) fn decode_units(lowtoken: &[u8]) -> (i32, i32) {
-    lookup(DELTA_TOKENS, lowtoken).unwrap_or((UNKNOWN_FIELD, 0))
+/// The first `TOKMAXLEN` bytes of a function's unit text with ASCII letters lowercased, all the
+/// keyword lookups compare of `downcase_truncate_identifier`'s result.
+fn lowered_unit(unit: &str) -> ([u8; TOKEN_MAX_LEN], usize) {
+    let mut lowered = [0; TOKEN_MAX_LEN];
+    let prefix = &unit.as_bytes()[..unit.len().min(TOKEN_MAX_LEN)];
+    for (low, byte) in lowered.iter_mut().zip(prefix) {
+        *low = byte.to_ascii_lowercase();
+    }
+    (lowered, prefix.len())
+}
+
+/// `DecodeUnits` of the unit text `date_trunc` takes, without the `DecodeSpecial` fallback.
+pub(crate) fn decode_units(unit: &str) -> (i32, i32) {
+    let (lowered, len) = lowered_unit(unit);
+    lookup(DELTA_TOKENS, &lowered[..len]).unwrap_or((UNKNOWN_FIELD, 0))
+}
+
+/// `DecodeUnits` falling back to `DecodeSpecial` of the unit text `extract` and `date_part`
+/// take.
+pub(crate) fn decode_extract_unit(unit: &str) -> (i32, i32) {
+    let (lowered, len) = lowered_unit(unit);
+    decode_word(&lowered[..len])
 }
 
 /// `AdjustFractMicroseconds`, adding `frac * scale` microseconds with a remainder above one half

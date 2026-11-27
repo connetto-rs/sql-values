@@ -15,7 +15,7 @@ use decode::{
     INTERVAL_FULL_RANGE, RANGE_DAY, RANGE_HOUR, RANGE_MINUTE, RANGE_MONTH, RANGE_SECOND,
     RANGE_YEAR, interval_in,
 };
-pub(crate) use decode::{decode_units, strtod};
+pub(crate) use decode::{decode_extract_unit, decode_units, strtod};
 
 const USECS_PER_DAY: i128 = 86_400_000_000;
 const USECS_PER_SEC: u64 = 1_000_000;
