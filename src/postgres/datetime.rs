@@ -15,10 +15,12 @@ use core::{cmp::Ordering, fmt};
 pub use arithmetic::DateArithmeticError;
 pub use decode::DateOrder;
 pub use input::{InputContext, parse_date, parse_time, parse_timestamp, parse_timestamp_tz};
+pub use to_char::TemporalFormatError;
 
 use super::{
     PgTimeZone, PgType,
     float::{int_to_f64, round_ties_even, truncate_to_i64},
+    zone::ZoneAbbreviation,
 };
 
 pub(crate) const USECS_PER_SEC: i64 = 1_000_000;
@@ -619,6 +621,17 @@ impl PgTimestampTz {
 pub(crate) fn utc_offset(zone: &PgTimeZone, utc: i64) -> Result<i32, DateTimeError> {
     let unix = utc.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS;
     zone.utc_offset(unix).ok_or(DateTimeError::OutsideJiffRange)
+}
+
+/// The offset and the abbreviation `zone` has at the instant `utc`, microseconds from 2000-01-01
+/// UTC, as `timestamp2tm` asks `pg_localtime` for them.
+fn local_time_type(
+    zone: &PgTimeZone,
+    utc: i64,
+) -> Result<(i32, ZoneAbbreviation<'_>), DateTimeError> {
+    let unix = utc.div_euclid(USECS_PER_SEC) + UNIX_TO_POSTGRES_SECS;
+    zone.local_time_type(unix)
+        .ok_or(DateTimeError::OutsideJiffRange)
 }
 
 /// The offset `DetermineTimeZoneOffset` gives the local clock `local`, microseconds from

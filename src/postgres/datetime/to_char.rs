@@ -4,7 +4,26 @@
 use alloc::string::String;
 use core::fmt::Write;
 
-use super::{PgTimestamp, date2j, split_clock, timestamp2tm};
+use super::{
+    DateTimeError, PgDate, PgTimeZone, PgTimestamp, PgTimestampTz, USECS_PER_SEC, date2j,
+    local_time_type, split_clock, timestamp2tm,
+};
+
+/// Why PostgreSQL refuses to format a date or time with `to_char`, one variant per message it
+/// raises, or why this crate cannot answer for it without a wider zone database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
+pub enum TemporalFormatError {
+    /// `TZ` or `tz` of a zone abbreviation longer than 24 bytes.
+    #[error("time zone format value too long")]
+    TimeZoneFormatValueTooLong,
+    /// A date from 294277-01-01, or one whose midnight in the zone falls outside the
+    /// `timestamptz` range.
+    #[error("date out of range for timestamp")]
+    DateOutOfRangeForTimestamp,
+    /// An IANA zone asked about an instant outside jiff's years.
+    #[error(transparent)]
+    DateTime(#[from] DateTimeError),
+}
 
 const MONTHS: [&str; 12] = [
     "January",
@@ -37,7 +56,7 @@ const ROMAN_MONTHS: [&str; 12] = [
 ];
 
 /// `fmt_tm` and `TmToChar`, the fields of a value `DCH_to_char` prints.
-struct Fields {
+struct Fields<'a> {
     year: i32,
     month: i32,
     day: i32,
@@ -47,9 +66,12 @@ struct Fields {
     microsecond: i64,
     weekday: i32,
     year_day: i32,
+    /// Seconds east of UTC.
+    offset: i32,
+    zone: Option<&'a str>,
 }
 
-impl Fields {
+impl Fields<'_> {
     /// The fields `timestamp2tm` gives a clock `micros` from 2000-01-01 without a zone, with the
     /// weekday and day of the year `timestamp_to_char` adds.
     fn civil(micros: i64) -> Self {
@@ -66,6 +88,8 @@ impl Fields {
             microsecond,
             weekday: (julian + 1) % 7,
             year_day: julian - date2j(year, 1, 1) + 1,
+            offset: 0,
+            zone: None,
         }
     }
 }
@@ -92,8 +116,9 @@ enum Keyword {
     /// The leading digits of the microseconds.
     Fraction(u8),
     SecondsOfDay,
-    /// `TZ` and `tz`, whose abbreviation a timestamp without a zone lacks.
-    ZoneAbbreviation,
+    ZoneAbbreviation {
+        lower: bool,
+    },
     ZoneHours,
     ZoneMinutes,
     UtcOffset,
@@ -180,7 +205,7 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("SS", Second),
         ("TZH", ZoneHours),
         ("TZM", ZoneMinutes),
-        ("TZ", ZoneAbbreviation),
+        ("TZ", ZoneAbbreviation { lower: false }),
         ("US", Fraction(6)),
         ("WW", WeekOfYear),
         ("W", WeekOfMonth),
@@ -234,7 +259,7 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("ss", Second),
         ("tzh", ZoneHours),
         ("tzm", ZoneMinutes),
-        ("tz", ZoneAbbreviation),
+        ("tz", ZoneAbbreviation { lower: true }),
         ("us", Fraction(6)),
         ("ww", WeekOfYear),
         ("w", WeekOfMonth),
@@ -364,15 +389,15 @@ impl<'a> Iterator for Nodes<'a> {
 }
 
 /// `DCH_to_char`, the text of `fields` in `template`.
-fn format(template: &str, fields: &Fields) -> String {
+fn format(template: &str, fields: &Fields<'_>) -> Result<String, TemporalFormatError> {
     let mut out = String::with_capacity(template.len());
     for node in Nodes::new(template) {
         match node {
             Node::Text(text) => out.push_str(text),
-            Node::Field(field) => field.write(fields, &mut out),
+            Node::Field(field) => field.write(fields, &mut out)?,
         }
     }
-    out
+    Ok(out)
 }
 
 /// `ADJUST_YEAR`, the year counted from 1 in its era.
@@ -436,7 +461,7 @@ const fn signed_width(fill: bool, negative: bool, width: usize) -> usize {
 
 impl Field {
     /// Appends the field's text for `fields` to `out`.
-    fn write(self, fields: &Fields, out: &mut String) {
+    fn write(self, fields: &Fields<'_>, out: &mut String) -> Result<(), TemporalFormatError> {
         let start = out.len();
         let fill = self.fill;
         let width = |width| if fill { 0 } else { width };
@@ -476,13 +501,33 @@ impl Field {
                     0,
                 );
             }
-            Keyword::ZoneAbbreviation => {}
-            // A timestamp without a zone prints the offset of UTC.
-            Keyword::ZoneHours => out.push_str("+00"),
-            Keyword::ZoneMinutes => out.push_str("00"),
+            Keyword::ZoneAbbreviation { lower } => {
+                if let Some(zone) = fields.zone {
+                    if zone.len() > 24 {
+                        return Err(TemporalFormatError::TimeZoneFormatValueTooLong);
+                    }
+                    if lower {
+                        out.extend(zone.chars().map(|c| c.to_ascii_lowercase()));
+                    } else {
+                        out.push_str(zone);
+                    }
+                }
+            }
+            Keyword::ZoneHours => {
+                out.push(offset_sign(fields.offset));
+                number(out, (fields.offset.unsigned_abs() / 3_600).into(), 2);
+            }
+            Keyword::ZoneMinutes => {
+                number(out, (fields.offset.unsigned_abs() % 3_600 / 60).into(), 2);
+            }
             Keyword::UtcOffset => {
-                out.push('+');
-                number(out, 0, width(2));
+                let magnitude = fields.offset.unsigned_abs();
+                out.push(offset_sign(fields.offset));
+                number(out, (magnitude / 3_600).into(), width(2));
+                if !magnitude.is_multiple_of(3_600) {
+                    out.push(':');
+                    number(out, (magnitude % 3_600 / 60).into(), 2);
+                }
             }
             Keyword::MonthName(case) => {
                 self.name(out, MONTHS[month_index(fields.month)], case, 9);
@@ -561,19 +606,20 @@ impl Field {
                     out.extend(numeral.chars().map(|c| c.to_ascii_lowercase()));
                 }
                 pad(out, numeral_start, padding);
-                return;
+                return Ok(());
             }
             Keyword::WeekOfMonth => number(out, ((fields.day - 1) / 7 + 1).into(), 0),
             Keyword::Julian => {
                 number(out, date2j(fields.year, fields.month, fields.day).into(), 0);
             }
-            Keyword::FixedFormat => return,
+            Keyword::FixedFormat => return Ok(()),
         }
         if let Some(ordinal) = self.ordinal
             && self.keyword.is_number()
         {
             append_ordinal(out, start, ordinal);
         }
+        Ok(())
     }
 
     /// A day or month name in `case`, padded to `padding` unless `FM` or `TM` is given.
@@ -613,7 +659,7 @@ impl Keyword {
             self,
             Self::Meridiem { .. }
                 | Self::Era { .. }
-                | Self::ZoneAbbreviation
+                | Self::ZoneAbbreviation { .. }
                 | Self::ZoneHours
                 | Self::ZoneMinutes
                 | Self::UtcOffset
@@ -632,9 +678,15 @@ fn month_index(month: i32) -> usize {
     usize::try_from(month - 1).expect("a calendar month from 1 to 12")
 }
 
-/// The index of a weekday in [`DAYS`].
+/// The index in [`DAYS`] of a weekday, which C's `%` leaves negative for a local date before
+/// 4714-11-23 BC, where PostgreSQL reads the name from outside its table and this takes the
+/// date's own weekday.
 fn day_index(weekday: i32) -> usize {
-    usize::try_from(weekday).expect("a weekday from 0 to 6")
+    usize::try_from(weekday.rem_euclid(7)).expect("a remainder of 7 fits usize")
+}
+
+const fn offset_sign(offset: i32) -> char {
+    if offset >= 0 { '+' } else { '-' }
 }
 
 /// C's `%0*d`, `value` zero-padded after its sign to `width` characters.
@@ -693,6 +745,107 @@ impl PgTimestamp {
         if template.is_empty() || !self.is_finite() {
             return None;
         }
-        Some(format(template, &Fields::civil(self.pg_micros())))
+        let fields = Fields::civil(self.pg_micros());
+        Some(format(template, &fields).expect("only a zone abbreviation refuses a timestamp"))
+    }
+}
+
+impl PgTimestampTz {
+    /// PostgreSQL's `to_char(timestamptz, text)` with `zone` as the session's `TimeZone`, under
+    /// `lc_time` `C`, printing the local clock and `zone`'s offset and abbreviation at the
+    /// instant, or `None`, PostgreSQL's SQL `NULL`, for an empty template or an infinite instant.
+    ///
+    /// # Errors
+    ///
+    /// [`TemporalFormatError::TimeZoneFormatValueTooLong`] for `TZ` or `tz` of an abbreviation
+    /// longer than 24 bytes, and [`TemporalFormatError::DateTime`] where an IANA zone is asked
+    /// about an instant outside jiff's years.
+    ///
+    /// ```
+    /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz};
+    ///
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let new_york = PgTimeZone::parse("America/New_York").unwrap();
+    ///     let at = PgTimestampTz::parse("2024-03-10 07:00:00+00", InputContext::new()).unwrap();
+    ///     assert_eq!(
+    ///         at.to_char("YYYY-MM-DD HH24:MI:SS TZ TZH TZM OF", &new_york).unwrap().as_deref(),
+    ///         Some("2024-03-10 03:00:00 EDT -04 00 -04"),
+    ///     );
+    /// }
+    /// let kathmandu = PgTimeZone::parse("<+0545>-05:45").unwrap();
+    /// let at = PgTimestampTz::parse("2024-02-29 00:00:00+00", InputContext::new()).unwrap();
+    /// assert_eq!(
+    ///     at.to_char("HH24:MI tz OF", &kathmandu).unwrap().as_deref(),
+    ///     Some("05:45 +0545 +05:45"),
+    /// );
+    /// assert_eq!(PgTimestampTz::INFINITY.to_char("YYYY", &kathmandu), Ok(None));
+    /// ```
+    pub fn to_char(
+        self,
+        template: &str,
+        zone: &PgTimeZone,
+    ) -> Result<Option<String>, TemporalFormatError> {
+        if template.is_empty() || !self.is_finite() {
+            return Ok(None);
+        }
+        let utc = self.pg_micros();
+        let (offset, abbreviation) = local_time_type(zone, utc)?;
+        let fields = Fields {
+            offset,
+            zone: Some(abbreviation.as_str()),
+            ..Fields::civil(utc + i64::from(offset) * USECS_PER_SEC)
+        };
+        format(template, &fields).map(Some)
+    }
+}
+
+impl PgDate {
+    /// PostgreSQL's `to_char(date, text)`, which formats the `timestamptz` of the date's first
+    /// moment in `zone`, the session's `TimeZone`, under `lc_time` `C`, or `None`, PostgreSQL's
+    /// SQL `NULL`, for an empty template or an infinite date.
+    ///
+    /// # Errors
+    ///
+    /// [`TemporalFormatError::DateOutOfRangeForTimestamp`] where the date's first moment lies
+    /// outside the `timestamptz` range, refused before the template is read, and the errors of
+    /// [`PgTimestampTz::to_char`].
+    ///
+    /// ```
+    /// use sql_values::postgres::{DateTimeError, PgDate, PgTimeZone, TemporalFormatError};
+    ///
+    /// let utc = PgTimeZone::parse("UTC0").unwrap();
+    /// let leap = PgDate::from_ymd(2024, 2, 29).unwrap();
+    /// assert_eq!(
+    ///     leap.to_char("YYYY-MM-DD HH24:MI:SS TZ", &utc).unwrap().as_deref(),
+    ///     Some("2024-02-29 00:00:00 UTC"),
+    /// );
+    /// let late = PgDate::from_ymd(294_277, 1, 1).unwrap();
+    /// assert_eq!(late.to_char("", &utc), Err(TemporalFormatError::DateOutOfRangeForTimestamp));
+    ///
+    /// #[cfg(feature = "tzdb")]
+    /// {
+    ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
+    ///     let far = PgDate::from_ymd(100_000, 1, 1).unwrap();
+    ///     assert_eq!(
+    ///         far.to_char("YYYY", &rome),
+    ///         Err(TemporalFormatError::DateTime(DateTimeError::OutsideJiffRange)),
+    ///     );
+    /// }
+    /// ```
+    pub fn to_char(
+        self,
+        template: &str,
+        zone: &PgTimeZone,
+    ) -> Result<Option<String>, TemporalFormatError> {
+        // `date2timestamptz_opt_overflow` raises this error for either end of the range.
+        let midnight = self
+            .to_timestamp()
+            .map_err(|_| TemporalFormatError::DateOutOfRangeForTimestamp)?;
+        let instant = midnight.to_timestamptz(zone).map_err(|error| match error {
+            DateTimeError::TimestampOutOfRange => TemporalFormatError::DateOutOfRangeForTimestamp,
+            error => error.into(),
+        })?;
+        instant.to_char(template, zone)
     }
 }

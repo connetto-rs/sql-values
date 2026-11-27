@@ -236,6 +236,23 @@ struct Rule {
     time: i32,
 }
 
+/// A zone's abbreviation at an instant, borrowed from the zone or held by jiff's answer.
+pub(crate) enum ZoneAbbreviation<'a> {
+    Borrowed(&'a str),
+    #[cfg(feature = "tzdb")]
+    Iana(jiff::tz::TimeZoneOffsetInfo<'a>),
+}
+
+impl ZoneAbbreviation<'_> {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Borrowed(name) => name,
+            #[cfg(feature = "tzdb")]
+            Self::Iana(info) => info.abbreviation(),
+        }
+    }
+}
+
 /// The day a POSIX rule names.
 #[derive(Debug, Clone, Copy)]
 enum RuleDate {
@@ -500,10 +517,10 @@ impl Posix {
         (year - 1..=year + 1).flat_map(move |year| self.year(year).into_iter().flatten())
     }
 
-    /// The offset east of UTC in effect at `unix`, as `localsub` finds it.
-    fn offset_at(self, unix: i64) -> i32 {
+    /// Whether daylight saving time is in effect at `unix`, as `localsub` finds it.
+    fn dst_at(self, unix: i64) -> bool {
         if !self.switches {
-            return self.offset(true);
+            return true;
         }
         let year = year_of(unix);
         (0..=YEARS_PER_REPEAT)
@@ -511,9 +528,14 @@ impl Posix {
                 self.around(year - back)
                     .rev()
                     .find(|&(at, _)| at <= unix)
-                    .map(|(_, dst)| self.offset(dst))
+                    .map(|(_, dst)| dst)
             })
             .expect("a zone that switches has a transition within 400 years")
+    }
+
+    /// The offset east of UTC in effect at `unix`, as `localsub` finds it.
+    fn offset_at(self, unix: i64) -> i32 {
+        self.offset(self.dst_at(unix))
     }
 
     /// The first transition after `unix`, its moment and the offset east after it.
@@ -754,6 +776,32 @@ impl PgTimeZone {
             Rules::Posix { rules, .. } => Some(rules.offset_at(unix)),
             #[cfg(feature = "tzdb")]
             Rules::Iana(zone) => Some(zone.to_offset(Timestamp::from_second(unix).ok()?).seconds()),
+        }
+    }
+
+    /// The offset east of UTC and the abbreviation in effect at `unix` seconds from 1970, the
+    /// `tm_gmtoff` and `tm_zone` of `pg_localtime`, or `None` where an IANA zone is asked about an
+    /// instant outside jiff's years.
+    pub(crate) fn local_time_type(&self, unix: i64) -> Option<(i32, ZoneAbbreviation<'_>)> {
+        match &self.rules {
+            Rules::Fixed {
+                offset,
+                abbreviation,
+            } => Some((*offset, ZoneAbbreviation::Borrowed(abbreviation))),
+            Rules::Posix {
+                rules,
+                std_name,
+                dst_name,
+            } => {
+                let dst = rules.dst_at(unix);
+                let name = if dst { dst_name } else { std_name };
+                Some((rules.offset(dst), ZoneAbbreviation::Borrowed(name)))
+            }
+            #[cfg(feature = "tzdb")]
+            Rules::Iana(zone) => {
+                let info = zone.to_offset_info(Timestamp::from_second(unix).ok()?);
+                Some((info.offset().seconds(), ZoneAbbreviation::Iana(info)))
+            }
         }
     }
 
