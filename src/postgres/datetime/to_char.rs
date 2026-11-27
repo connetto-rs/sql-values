@@ -5,14 +5,19 @@ use alloc::string::String;
 use core::fmt::Write;
 
 use super::{
-    DateTimeError, PgDate, PgTimeZone, PgTimestamp, PgTimestampTz, USECS_PER_SEC, date2j,
-    local_time_type, split_clock, timestamp2tm,
+    DateTimeError, MONTHS_PER_YEAR, PgDate, PgTime, PgTimeZone, PgTimestamp, PgTimestampTz,
+    USECS_PER_SEC, date2j, local_time_type, split_clock, timestamp2tm,
 };
+use crate::postgres::PgInterval;
 
 /// Why PostgreSQL refuses to format a date or time with `to_char`, one variant per message it
 /// raises, or why this crate cannot answer for it without a wider zone database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum TemporalFormatError {
+    /// A field of a calendar date or a zone in the template of an interval or a time, which
+    /// PostgreSQL hints are not tied to calendar dates.
+    #[error("invalid format specification for an interval value")]
+    InvalidForInterval,
     /// `TZ` or `tz` of a zone abbreviation longer than 24 bytes.
     #[error("time zone format value too long")]
     TimeZoneFormatValueTooLong,
@@ -69,6 +74,9 @@ struct Fields<'a> {
     /// Seconds east of UTC.
     offset: i32,
     zone: Option<&'a str>,
+    /// Whether the fields are an interval's, counting years from zero and refusing the fields
+    /// of a calendar date or a zone.
+    interval: bool,
 }
 
 impl Fields<'_> {
@@ -90,6 +98,36 @@ impl Fields<'_> {
             year_day: julian - date2j(year, 1, 1) + 1,
             offset: 0,
             zone: None,
+            interval: false,
+        }
+    }
+
+    /// The fields `interval_to_char` takes from `interval2itm`, each truncated toward zero, the
+    /// day of the year approximating the whole span in days.
+    fn interval(interval: PgInterval) -> Self {
+        let (hour, minute, second, microsecond) = split_clock(interval.microseconds);
+        Self {
+            year: interval.months / MONTHS_PER_YEAR,
+            month: interval.months % MONTHS_PER_YEAR,
+            day: interval.days,
+            hour,
+            minute,
+            second,
+            microsecond,
+            weekday: 0,
+            year_day: interval.months.wrapping_mul(30).wrapping_add(interval.days),
+            offset: 0,
+            zone: None,
+            interval: true,
+        }
+    }
+
+    /// `ADJUST_YEAR`, a date's year counted from 1 in its era, an interval's years as they are.
+    const fn era_year(&self, year: i32) -> i32 {
+        if self.interval || year > 0 {
+            year
+        } else {
+            1 - year
         }
     }
 }
@@ -400,11 +438,6 @@ fn format(template: &str, fields: &Fields<'_>) -> Result<String, TemporalFormatE
     Ok(out)
 }
 
-/// `ADJUST_YEAR`, the year counted from 1 in its era.
-const fn era_year(year: i32) -> i32 {
-    if year <= 0 { 1 - year } else { year }
-}
-
 /// `j2day`, the weekday of a Julian day from Sunday at 0.
 const fn j2day(julian: i32) -> i32 {
     julian.wrapping_add(1).rem_euclid(7)
@@ -465,6 +498,9 @@ impl Field {
         let start = out.len();
         let fill = self.fill;
         let width = |width| if fill { 0 } else { width };
+        if fields.interval && self.keyword.needs_calendar_date() {
+            return Err(TemporalFormatError::InvalidForInterval);
+        }
         match self.keyword {
             Keyword::Meridiem([morning, afternoon]) => {
                 out.push_str(if fields.hour % 24 >= 12 {
@@ -561,15 +597,23 @@ impl Field {
                 number(out, day.into(), 0);
             }
             Keyword::WeekOfYear => {
-                number(out, ((fields.year_day - 1) / 7 + 1).into(), width(2));
+                let week = fields.year_day.wrapping_sub(1) / 7 + 1;
+                number(out, week.into(), width(2));
             }
             Keyword::IsoWeek => {
                 let week = date2isoweek(fields.year, fields.month, fields.day);
                 number(out, week.into(), width(2));
             }
-            Keyword::Quarter => number(out, ((fields.month - 1) / 3 + 1).into(), 0),
+            Keyword::Quarter => {
+                if fields.month == 0 {
+                    return Ok(());
+                }
+                number(out, ((fields.month - 1) / 3 + 1).into(), 0);
+            }
             Keyword::Century => {
-                let century = if fields.year > 0 {
+                let century = if fields.interval {
+                    fields.year / 100
+                } else if fields.year > 0 {
                     (fields.year - 1) / 100 + 1
                 } else {
                     fields.year / 100 - 1
@@ -582,22 +626,30 @@ impl Field {
                 number(out, century.into(), width);
             }
             Keyword::YearWithComma => {
-                let year = era_year(fields.year);
+                let year = fields.era_year(fields.year);
                 let thousands = year / 1_000;
                 number(out, thousands.into(), 0);
                 out.push(',');
                 number(out, (year - thousands * 1_000).into(), 3);
             }
             Keyword::Year { digits } => {
-                self.year(out, era_year(fields.year), fields.year, digits);
+                self.year(out, fields, fields.era_year(fields.year), digits);
             }
             Keyword::IsoYear { digits } => {
                 let year = date2isoyear(fields.year, fields.month, fields.day);
-                self.year(out, era_year(year), fields.year, digits);
+                self.year(out, fields, fields.era_year(year), digits);
             }
             Keyword::RomanMonth { upper } => {
-                let index = usize::try_from(12 - fields.month).expect("a month of a date");
-                let numeral = ROMAN_MONTHS[index];
+                if fields.month == 0 && fields.year == 0 {
+                    return Ok(());
+                }
+                let index = match fields.month {
+                    0 if fields.year >= 0 => 0,
+                    0 => 11,
+                    month if month < 0 => -(month + 1),
+                    month => 12 - month,
+                };
+                let numeral = ROMAN_MONTHS[usize::try_from(index).expect("a month within a year")];
                 let padding = if fill { 0 } else { 4 };
                 let numeral_start = out.len();
                 if upper {
@@ -608,7 +660,9 @@ impl Field {
                 pad(out, numeral_start, padding);
                 return Ok(());
             }
-            Keyword::WeekOfMonth => number(out, ((fields.day - 1) / 7 + 1).into(), 0),
+            Keyword::WeekOfMonth => {
+                number(out, (fields.day.wrapping_sub(1) / 7 + 1).into(), 0);
+            }
             Keyword::Julian => {
                 number(out, date2j(fields.year, fields.month, fields.day).into(), 0);
             }
@@ -635,9 +689,8 @@ impl Field {
         }
     }
 
-    /// The last `digits` of the era's `year`, widened by one when `calendar_year`'s era year is
-    /// negative.
-    fn year(self, out: &mut String, year: i32, calendar_year: i32, digits: usize) {
+    /// The last `digits` of `year`, widened by one when the era year of `fields` is negative.
+    fn year(self, out: &mut String, fields: &Fields<'_>, year: i32, digits: usize) {
         let (value, width) = match digits {
             4 => (year, 4),
             3 => (year % 1_000, 3),
@@ -647,12 +700,30 @@ impl Field {
                 return;
             }
         };
-        let negative = era_year(calendar_year) < 0;
+        let negative = fields.era_year(fields.year) < 0;
         number(out, value.into(), signed_width(self.fill, negative, width));
     }
 }
 
 impl Keyword {
+    /// Whether the keyword prints a field of a calendar date or a zone, `INVALID_FOR_INTERVAL`.
+    const fn needs_calendar_date(self) -> bool {
+        matches!(
+            self,
+            Self::Era(_)
+                | Self::ZoneAbbreviation { .. }
+                | Self::ZoneHours
+                | Self::ZoneMinutes
+                | Self::UtcOffset
+                | Self::MonthName(_)
+                | Self::MonthAbbreviation(_)
+                | Self::DayName(_)
+                | Self::DayAbbreviation(_)
+                | Self::DayOfWeek
+                | Self::IsoDayOfWeek
+        )
+    }
+
     /// Whether `TH` and `th` append an ordinal ending to the keyword's text.
     const fn is_number(self) -> bool {
         !matches!(
@@ -746,7 +817,8 @@ impl PgTimestamp {
             return None;
         }
         let fields = Fields::civil(self.pg_micros());
-        Some(format(template, &fields).expect("only a zone abbreviation refuses a timestamp"))
+        let text = format(template, &fields);
+        Some(text.expect("only an interval's fields or a zone abbreviation refuse a template"))
     }
 }
 
@@ -847,5 +919,71 @@ impl PgDate {
             error => error.into(),
         })?;
         instant.to_char(template, zone)
+    }
+}
+
+impl PgInterval {
+    /// PostgreSQL's `to_char(interval, text)` under `lc_time` `C`, or `None`, PostgreSQL's SQL
+    /// `NULL`, for an empty template or an infinite interval.
+    ///
+    /// Years are the months over twelve and months the rest, days and the clock are printed as
+    /// they are held, each truncated toward zero with its sign, and `DDD` approximates the whole
+    /// span in days with a month as 30.
+    ///
+    /// # Errors
+    ///
+    /// [`TemporalFormatError::InvalidForInterval`] for a template naming a weekday, a month or
+    /// day name, an era or a zone field.
+    ///
+    /// ```
+    /// use sql_values::postgres::{TemporalFormatError, parse_interval};
+    ///
+    /// let span = parse_interval("1 year 2 months 3 days 25 hours 4 minutes 5.123456 seconds").unwrap();
+    /// assert_eq!(
+    ///     span.to_char("YYYY MM DD HH24 HH12 MI SS US").unwrap().as_deref(),
+    ///     Some("0001 02 03 25 01 04 05 123456"),
+    /// );
+    /// let negative = parse_interval("-1 year -2 months -3 days -25 hours").unwrap();
+    /// assert_eq!(
+    ///     negative.to_char("YYYY MM DD HH24 HH12").unwrap().as_deref(),
+    ///     Some("-0001 -02 -3 -25 -01"),
+    /// );
+    /// assert_eq!(span.to_char("IYYY IW ID"), Err(TemporalFormatError::InvalidForInterval));
+    /// ```
+    pub fn to_char(self, template: &str) -> Result<Option<String>, TemporalFormatError> {
+        if template.is_empty() || !self.is_finite() {
+            return Ok(None);
+        }
+        format(template, &Fields::interval(self)).map(Some)
+    }
+}
+
+impl PgTime {
+    /// PostgreSQL's `to_char(time, text)`, which formats the time cast to an `interval` of its
+    /// microseconds, as [`PgInterval::to_char`] does, or `None` for an empty template.
+    ///
+    /// # Errors
+    ///
+    /// [`TemporalFormatError::InvalidForInterval`] for a template naming a weekday, a month or
+    /// day name, an era or a zone field.
+    ///
+    /// ```
+    /// use sql_values::postgres::{PgTime, TemporalFormatError};
+    ///
+    /// let midnight = PgTime::from_hms_micro(24, 0, 0, 0).unwrap();
+    /// assert_eq!(
+    ///     midnight.to_char("HH24:MI:SS YYYY-MM-DD").unwrap().as_deref(),
+    ///     Some("24:00:00 0000-00-00"),
+    /// );
+    /// let noon = PgTime::from_hms_micro(12, 0, 0, 0).unwrap();
+    /// assert_eq!(noon.to_char("TZ"), Err(TemporalFormatError::InvalidForInterval));
+    /// ```
+    pub fn to_char(self, template: &str) -> Result<Option<String>, TemporalFormatError> {
+        let interval = PgInterval {
+            months: 0,
+            days: 0,
+            microseconds: self.micros(),
+        };
+        interval.to_char(template)
     }
 }

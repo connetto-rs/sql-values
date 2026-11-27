@@ -17,7 +17,9 @@ use diesel::{
     PgConnection, RunQueryDsl, define_sql_function,
     sql_types::{Bool, Text},
 };
-use sql_values::postgres::{InputContext, PgDate, PgTimeZone, PgTimestamp, PgTimestampTz};
+use sql_values::postgres::{
+    InputContext, PgDate, PgTimeZone, PgTimestamp, PgTimestampTz, parse_interval, parse_time,
+};
 
 static PG18: postgres::Slot = exit_slot::ExitSlot::new();
 
@@ -168,6 +170,51 @@ const FAR_INSTANTS: &[&str] = &[
     "294276-12-31 23:59:59.999999+00",
 ];
 
+/// Intervals of each sign in every field, whole years of months, a twelve-hour clock at zero,
+/// the teens of ordinal endings, every bound of the type, and both infinities.
+const INTERVALS: &[&str] = &[
+    "0",
+    "1 year 2 mons 3 days 25:04:05.123456",
+    "-1 years -2 mons -3 days -25:04:05.123456",
+    "12:00:00",
+    "-12:00:00",
+    "-00:00:00.000001",
+    "00:00:00.000001",
+    "1 mon",
+    "-1 mons",
+    "11 mons",
+    "-11 mons",
+    "1 year",
+    "-1 years",
+    "1 mon -1 days +01:00:00",
+    "-2 years +3 mons -00:00:00.5",
+    "11 days 11:11:11",
+    "12 days 12:12:12",
+    "13 days 13:13:13",
+    "21 days 22:23:00",
+    "100 years",
+    "-100 years",
+    "1999 years 11 mons",
+    "-1000 years 1 day",
+    "2147483647 days",
+    "-2147483648 days",
+    "178956970 years 7 mons 2147483647 days 2562047788:00:54.775807",
+    "-178956970 years -8 mons -2147483648 days -2562047788:00:54.775807",
+    "infinity",
+    "-infinity",
+];
+
+/// Times from midnight to 24:00:00, at noon and a microsecond from each.
+const TIMES: &[&str] = &[
+    "00:00:00",
+    "00:00:00.000001",
+    "11:59:59.999999",
+    "12:00:00",
+    "12:34:56.123456",
+    "23:59:59.999999",
+    "24:00:00",
+];
+
 /// Dates whose midnight a zone skips, at the ends of the timestamp range and past it, a leap day
 /// and both infinities.
 const DATES: &[&str] = &[
@@ -312,4 +359,46 @@ fn pg18_formats_every_date_in_each_zone() {
         }
         compare(&mut conn, core::mem::take(&mut cases));
     }
+}
+
+/// `to_char(interval, text)` of every interval with every template.
+#[test]
+fn pg18_formats_every_interval_with_every_template() {
+    let mut conn = connect();
+    let mut cases = Vec::new();
+    for &text in INTERVALS {
+        let interval = parse_interval(text).unwrap_or_else(|error| panic!("{text:?}: {error}"));
+        for &template in TEMPLATES {
+            cases.push((
+                format!(
+                    "SELECT to_char(interval {}, {})",
+                    quoted(text),
+                    quoted(template)
+                ),
+                answer(interval.to_char(template)),
+            ));
+        }
+    }
+    compare(&mut conn, cases);
+}
+
+/// `to_char(time, text)` of every time with every template.
+#[test]
+fn pg18_formats_every_time_with_every_template() {
+    let mut conn = connect();
+    let mut cases = Vec::new();
+    for &text in TIMES {
+        let time = parse_time(text).unwrap_or_else(|| panic!("{text:?}"));
+        for &template in TEMPLATES {
+            cases.push((
+                format!(
+                    "SELECT to_char(time {}, {})",
+                    quoted(text),
+                    quoted(template)
+                ),
+                answer(time.to_char(template)),
+            ));
+        }
+    }
+    compare(&mut conn, cases);
 }
