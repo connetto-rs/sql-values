@@ -27,7 +27,8 @@ pub use cast::{
 pub use date_trunc::{DateTruncError, DateTruncField};
 pub use datetime::{
     DateArithmeticError, DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz,
-    PgTimestamp, PgTimestampTz, parse_date, parse_time, parse_timestamp, parse_timestamp_tz,
+    PgTimestamp, PgTimestampTz, TemporalFormatError, parse_date, parse_time, parse_timestamp,
+    parse_timestamp_tz,
 };
 pub use extract::{ExtractError, ExtractField};
 pub use float8::{Float8Error, PgFloat8};
