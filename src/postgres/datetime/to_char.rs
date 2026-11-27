@@ -37,7 +37,7 @@ const ROMAN_MONTHS: [&str; 12] = [
 ];
 
 /// `fmt_tm` and `TmToChar`, the fields of a value `DCH_to_char` prints.
-struct Fields<'a> {
+struct Fields {
     year: i32,
     month: i32,
     day: i32,
@@ -47,12 +47,9 @@ struct Fields<'a> {
     microsecond: i64,
     weekday: i32,
     year_day: i32,
-    /// Seconds east of UTC.
-    offset: i32,
-    zone: Option<&'a str>,
 }
 
-impl Fields<'static> {
+impl Fields {
     /// The fields `timestamp2tm` gives a clock `micros` from 2000-01-01 without a zone, with the
     /// weekday and day of the year `timestamp_to_char` adds.
     fn civil(micros: i64) -> Self {
@@ -69,8 +66,6 @@ impl Fields<'static> {
             microsecond,
             weekday: (julian + 1) % 7,
             year_day: julian - date2j(year, 1, 1) + 1,
-            offset: 0,
-            zone: None,
         }
     }
 }
@@ -94,14 +89,11 @@ enum Keyword {
     Hour24,
     Minute,
     Second,
-    Fraction {
-        digits: usize,
-        divisor: i64,
-    },
+    /// The leading digits of the microseconds.
+    Fraction(u8),
     SecondsOfDay,
-    ZoneAbbreviation {
-        lower: bool,
-    },
+    /// `TZ` and `tz`, whose abbreviation a timestamp without a zone lacks.
+    ZoneAbbreviation,
     ZoneHours,
     ZoneMinutes,
     UtcOffset,
@@ -138,9 +130,6 @@ enum Keyword {
 const KEYWORDS: &[(&str, Keyword)] = {
     use Case::{Capitalized, Lower, Upper};
     use Keyword::*;
-    const fn fraction(digits: usize, divisor: i64) -> Keyword {
-        Fraction { digits, divisor }
-    }
     &[
         ("A.D.", Era(["A.D.", "B.C."])),
         ("A.M.", Meridiem(["A.M.", "P.M."])),
@@ -156,12 +145,12 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("Day", DayName(Capitalized)),
         ("Dy", DayAbbreviation(Capitalized)),
         ("D", DayOfWeek),
-        ("FF1", fraction(1, 100_000)),
-        ("FF2", fraction(2, 10_000)),
-        ("FF3", fraction(3, 1_000)),
-        ("FF4", fraction(4, 100)),
-        ("FF5", fraction(5, 10)),
-        ("FF6", fraction(6, 1)),
+        ("FF1", Fraction(1)),
+        ("FF2", Fraction(2)),
+        ("FF3", Fraction(3)),
+        ("FF4", Fraction(4)),
+        ("FF5", Fraction(5)),
+        ("FF6", Fraction(6)),
         ("FX", FixedFormat),
         ("HH24", Hour24),
         ("HH12", Hour12),
@@ -178,7 +167,7 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("MM", Month),
         ("MONTH", MonthName(Upper)),
         ("MON", MonthAbbreviation(Upper)),
-        ("MS", fraction(3, 1_000)),
+        ("MS", Fraction(3)),
         ("Month", MonthName(Capitalized)),
         ("Mon", MonthAbbreviation(Capitalized)),
         ("OF", UtcOffset),
@@ -191,8 +180,8 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("SS", Second),
         ("TZH", ZoneHours),
         ("TZM", ZoneMinutes),
-        ("TZ", ZoneAbbreviation { lower: false }),
-        ("US", fraction(6, 1)),
+        ("TZ", ZoneAbbreviation),
+        ("US", Fraction(6)),
         ("WW", WeekOfYear),
         ("W", WeekOfMonth),
         ("Y,YYY", YearWithComma),
@@ -212,12 +201,12 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("dd", DayOfMonth),
         ("dy", DayAbbreviation(Lower)),
         ("d", DayOfWeek),
-        ("ff1", fraction(1, 100_000)),
-        ("ff2", fraction(2, 10_000)),
-        ("ff3", fraction(3, 1_000)),
-        ("ff4", fraction(4, 100)),
-        ("ff5", fraction(5, 10)),
-        ("ff6", fraction(6, 1)),
+        ("ff1", Fraction(1)),
+        ("ff2", Fraction(2)),
+        ("ff3", Fraction(3)),
+        ("ff4", Fraction(4)),
+        ("ff5", Fraction(5)),
+        ("ff6", Fraction(6)),
         ("fx", FixedFormat),
         ("hh24", Hour24),
         ("hh12", Hour12),
@@ -234,7 +223,7 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("mm", Month),
         ("month", MonthName(Lower)),
         ("mon", MonthAbbreviation(Lower)),
-        ("ms", fraction(3, 1_000)),
+        ("ms", Fraction(3)),
         ("of", UtcOffset),
         ("p.m.", Meridiem(["a.m.", "p.m."])),
         ("pm", Meridiem(["am", "pm"])),
@@ -245,8 +234,8 @@ const KEYWORDS: &[(&str, Keyword)] = {
         ("ss", Second),
         ("tzh", ZoneHours),
         ("tzm", ZoneMinutes),
-        ("tz", ZoneAbbreviation { lower: true }),
-        ("us", fraction(6, 1)),
+        ("tz", ZoneAbbreviation),
+        ("us", Fraction(6)),
         ("ww", WeekOfYear),
         ("w", WeekOfMonth),
         ("y,yyy", YearWithComma),
@@ -375,7 +364,7 @@ impl<'a> Iterator for Nodes<'a> {
 }
 
 /// `DCH_to_char`, the text of `fields` in `template`.
-fn format(template: &str, fields: &Fields<'_>) -> String {
+fn format(template: &str, fields: &Fields) -> String {
     let mut out = String::with_capacity(template.len());
     for node in Nodes::new(template) {
         match node {
@@ -447,7 +436,7 @@ const fn signed_width(fill: bool, negative: bool, width: usize) -> usize {
 
 impl Field {
     /// Appends the field's text for `fields` to `out`.
-    fn write(self, fields: &Fields<'_>, out: &mut String) {
+    fn write(self, fields: &Fields, out: &mut String) {
         let start = out.len();
         let fill = self.fill;
         let width = |width| if fill { 0 } else { width };
@@ -476,8 +465,9 @@ impl Field {
             Keyword::Second => {
                 number(out, fields.second, signed_width(fill, fields.second < 0, 2));
             }
-            Keyword::Fraction { digits, divisor } => {
-                number(out, fields.microsecond / divisor, digits);
+            Keyword::Fraction(digits) => {
+                let divisor = 10_i64.pow(u32::from(6 - digits));
+                number(out, fields.microsecond / divisor, usize::from(digits));
             }
             Keyword::SecondsOfDay => {
                 number(
@@ -486,30 +476,13 @@ impl Field {
                     0,
                 );
             }
-            Keyword::ZoneAbbreviation { lower } => {
-                if let Some(zone) = fields.zone {
-                    if lower {
-                        out.extend(zone.chars().map(|c| c.to_ascii_lowercase()));
-                    } else {
-                        out.push_str(zone);
-                    }
-                }
-            }
-            Keyword::ZoneHours => {
-                out.push(offset_sign(fields.offset));
-                number(out, (fields.offset.unsigned_abs() / 3_600).into(), 2);
-            }
-            Keyword::ZoneMinutes => {
-                number(out, (fields.offset.unsigned_abs() % 3_600 / 60).into(), 2);
-            }
+            Keyword::ZoneAbbreviation => {}
+            // A timestamp without a zone prints the offset of UTC.
+            Keyword::ZoneHours => out.push_str("+00"),
+            Keyword::ZoneMinutes => out.push_str("00"),
             Keyword::UtcOffset => {
-                let magnitude = fields.offset.unsigned_abs();
-                out.push(offset_sign(fields.offset));
-                number(out, (magnitude / 3_600).into(), width(2));
-                if !magnitude.is_multiple_of(3_600) {
-                    out.push(':');
-                    number(out, (magnitude % 3_600 / 60).into(), 2);
-                }
+                out.push('+');
+                number(out, 0, width(2));
             }
             Keyword::MonthName(case) => {
                 self.name(out, MONTHS[month_index(fields.month)], case, 9);
@@ -549,12 +522,7 @@ impl Field {
                 let week = date2isoweek(fields.year, fields.month, fields.day);
                 number(out, week.into(), width(2));
             }
-            Keyword::Quarter => {
-                if fields.month == 0 {
-                    return;
-                }
-                number(out, ((fields.month - 1) / 3 + 1).into(), 0);
-            }
+            Keyword::Quarter => number(out, ((fields.month - 1) / 3 + 1).into(), 0),
             Keyword::Century => {
                 let century = if fields.year > 0 {
                     (fields.year - 1) / 100 + 1
@@ -583,16 +551,8 @@ impl Field {
                 self.year(out, era_year(year), fields.year, digits);
             }
             Keyword::RomanMonth { upper } => {
-                if fields.month == 0 && fields.year == 0 {
-                    return;
-                }
-                let index = match fields.month {
-                    0 if fields.year >= 0 => 0,
-                    0 => 11,
-                    month if month < 0 => -(month + 1),
-                    month => 12 - month,
-                };
-                let numeral = ROMAN_MONTHS[usize::try_from(index).expect("a month within a year")];
+                let index = usize::try_from(12 - fields.month).expect("a month of a date");
+                let numeral = ROMAN_MONTHS[index];
                 let padding = if fill { 0 } else { 4 };
                 let numeral_start = out.len();
                 if upper {
@@ -653,7 +613,7 @@ impl Keyword {
             self,
             Self::Meridiem { .. }
                 | Self::Era { .. }
-                | Self::ZoneAbbreviation { .. }
+                | Self::ZoneAbbreviation
                 | Self::ZoneHours
                 | Self::ZoneMinutes
                 | Self::UtcOffset
@@ -675,10 +635,6 @@ fn month_index(month: i32) -> usize {
 /// The index of a weekday in [`DAYS`].
 fn day_index(weekday: i32) -> usize {
     usize::try_from(weekday).expect("a weekday from 0 to 6")
-}
-
-const fn offset_sign(offset: i32) -> char {
-    if offset >= 0 { '+' } else { '-' }
 }
 
 /// C's `%0*d`, `value` zero-padded after its sign to `width` characters.
