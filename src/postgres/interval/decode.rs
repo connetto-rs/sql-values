@@ -152,6 +152,12 @@ fn decode_word(word: &[u8]) -> (i32, i32) {
         .unwrap_or((UNKNOWN_FIELD, 0))
 }
 
+/// `DecodeUnits`, the token type and value of a lowercased unit word, without the
+/// `DecodeSpecial` fallback `date_trunc` does not take.
+pub(crate) fn decode_units(lowtoken: &[u8]) -> (i32, i32) {
+    lookup(DELTA_TOKENS, lowtoken).unwrap_or((UNKNOWN_FIELD, 0))
+}
+
 /// `AdjustFractMicroseconds`, adding `frac * scale` microseconds with a remainder above one half
 /// rounded away from zero.
 fn adjust_fract_microseconds(
