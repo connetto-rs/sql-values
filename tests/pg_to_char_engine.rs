@@ -131,19 +131,6 @@ const ZONES: &[&str] = &[
     "<AAAAAAAAAAAAAAAAAAAAAAAAA>5",
 ];
 
-/// The zones whose offsets hold over PostgreSQL's whole range, beyond jiff's years.
-const RULE_ZONES: &[&str] = &[
-    "UTC",
-    "5.5",
-    "-167",
-    "167",
-    "XXX3YYY",
-    "<-0330>3:30<-0230>,M3.2.0,M11.1.0",
-    "XXX3YYY,0/0,365/26",
-    "<AAAAAAAAAAAAAAAAAAAAAAAA>5",
-    "<AAAAAAAAAAAAAAAAAAAAAAAAA>5",
-];
-
 /// Instants around daylight saving time changes, ISO year boundaries and a leap day, and both
 /// infinities.
 const INSTANTS: &[&str] = &[
@@ -163,8 +150,9 @@ const INSTANTS: &[&str] = &[
     "-infinity",
 ];
 
-/// Instants at the ends of PostgreSQL's range, outside jiff's years.
 const FAR_INSTANTS: &[&str] = &[
+    "9999-12-31 12:00:00+00",
+    "9999-12-31 23:59:59.999999+00",
     "4714-11-24 00:00:00+00 BC",
     "4714-11-25 12:00:00+00 BC",
     "294276-12-31 23:59:59.999999+00",
@@ -228,8 +216,12 @@ const DATES: &[&str] = &[
     "-infinity",
 ];
 
-/// Dates at the ends of the timestamp range, outside jiff's years.
-const FAR_DATES: &[&str] = &["4714-11-24 BC", "4714-11-25 BC", "294276-12-31"];
+const FAR_DATES: &[&str] = &[
+    "4714-11-24 BC",
+    "4714-11-25 BC",
+    "9999-12-31",
+    "294276-12-31",
+];
 
 /// Templates of every field a zone moves, with an empty one.
 const ZONE_TEMPLATES: &[&str] = &[
@@ -304,12 +296,7 @@ fn pg18_formats_every_timestamptz_in_each_zone() {
     let mut cases = Vec::new();
     for &name in ZONES {
         let zone = connect_in(&mut conn, name);
-        let far: &[&str] = if RULE_ZONES.contains(&name) {
-            FAR_INSTANTS
-        } else {
-            &[]
-        };
-        for &text in INSTANTS.iter().chain(far) {
+        for &text in INSTANTS.iter().chain(FAR_INSTANTS) {
             let instant = PgTimestampTz::parse(text, InputContext::new())
                 .unwrap_or_else(|error| panic!("{text:?}: {error}"));
             for &template in ZONE_TEMPLATES.iter().chain(TEMPLATES) {
@@ -338,12 +325,7 @@ fn pg18_formats_every_date_in_each_zone() {
     let mut cases = Vec::new();
     for &name in ZONES {
         let zone = connect_in(&mut conn, name);
-        let far: &[&str] = if RULE_ZONES.contains(&name) {
-            FAR_DATES
-        } else {
-            &[]
-        };
-        for &text in DATES.iter().chain(far) {
+        for &text in DATES.iter().chain(FAR_DATES) {
             let date = PgDate::parse(text, InputContext::new())
                 .unwrap_or_else(|error| panic!("{text:?}: {error}"));
             for &template in ZONE_TEMPLATES {

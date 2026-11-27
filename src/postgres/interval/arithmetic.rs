@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use super::{IntervalError, PgInterval};
 use crate::postgres::{
-    DateTimeError, PgTime, PgTimeZone, PgTimestamp, PgTimestampTz,
+    PgTime, PgTimeZone, PgTimestamp, PgTimestampTz,
     datetime::{
         MONTHS_PER_YEAR, POSTGRES_EPOCH_JDATE, USECS_PER_DAY, USECS_PER_SEC, date2j, days_in_month,
         is_valid_julian, is_valid_timestamp, j2date, local_offset, timestamp2tm, tm2timestamp,
@@ -35,9 +35,6 @@ pub enum ShiftError {
     /// `time - interval` of an infinite interval.
     #[error("cannot subtract infinite interval from time")]
     InfiniteIntervalSubtractedFromTime,
-    /// An IANA time zone asked about an instant outside jiff's years -9999 to 9999.
-    #[error("value outside jiff's years -9999 to 9999")]
-    OutsideJiffRange,
 }
 
 impl PgInterval {
@@ -314,9 +311,7 @@ impl PgInterval {
     ///
     /// # Errors
     ///
-    /// The errors of [`add_to_timestamp`](Self::add_to_timestamp), and
-    /// [`ShiftError::OutsideJiffRange`] where an IANA zone is asked about an instant outside
-    /// jiff's years.
+    /// The errors of [`add_to_timestamp`](Self::add_to_timestamp).
     ///
     /// ```
     /// use sql_values::postgres::{InputContext, PgTimeZone, PgTimestampTz, parse_interval};
@@ -368,12 +363,9 @@ impl PgInterval {
             None => {}
         }
         // `timestamp2tm`, in the zone when there is one.
-        let local_fields = |utc: i64| -> Result<_, ShiftError> {
-            let offset = match zone {
-                None => 0,
-                Some(zone) => utc_offset(zone, utc).map_err(shift_error)?,
-            };
-            Ok(timestamp2tm(utc + i64::from(offset) * USECS_PER_SEC))
+        let local_fields = |utc: i64| {
+            let offset = zone.map_or(0, |zone| utc_offset(zone, utc));
+            timestamp2tm(utc + i64::from(offset) * USECS_PER_SEC)
         };
         // `DetermineTimeZoneOffset` in the zone when there is one, then `tm2timestamp`.
         let rebuild = |year: i32, month: i32, day: i32, clock: i64| {
@@ -388,14 +380,14 @@ impl PgInterval {
                         .checked_mul(USECS_PER_DAY)
                         .and_then(|micros| micros.checked_add(clock))
                         .ok_or(out_of_range)?;
-                    local_offset(zone, local).map_err(shift_error)?
+                    local_offset(zone, local)
                 }
             };
             tm2timestamp(year, month, day, clock, offset).ok_or(out_of_range)
         };
         let mut timestamp = at;
         if self.months != 0 {
-            let (mut year, month, mut day, clock) = local_fields(timestamp)?;
+            let (mut year, month, mut day, clock) = local_fields(timestamp);
             let mut month = month.checked_add(self.months).ok_or(out_of_range)?;
             // C's truncating division and remainder.
             if month > MONTHS_PER_YEAR {
@@ -409,7 +401,7 @@ impl PgInterval {
             timestamp = rebuild(year, month, day, clock)?;
         }
         if self.days != 0 {
-            let (year, month, day, clock) = local_fields(timestamp)?;
+            let (year, month, day, clock) = local_fields(timestamp);
             // `timestamp_pl_interval` refuses a Julian day below 0, and
             // `timestamptz_pl_interval` one below -1, which a local date west of UTC reaches.
             let lowest = if zone.is_some() { -1 } else { 0 };
@@ -564,14 +556,6 @@ struct FieldResults {
     months: Option<i32>,
     days: Option<i32>,
     microseconds: Option<i64>,
-}
-
-/// The shift error of a refusal by a zone lookup.
-fn shift_error(error: DateTimeError) -> ShiftError {
-    match error {
-        DateTimeError::OutsideJiffRange => ShiftError::OutsideJiffRange,
-        _ => ShiftError::TimestampOutOfRange,
-    }
 }
 
 /// The time of `moved` microseconds reduced into the day, as `time_pl_interval` reduces it.

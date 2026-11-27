@@ -104,10 +104,6 @@ const ZONES: &[&str] = &[
     "EST5EDT,M3.2.0,M11.1.0",
 ];
 
-/// The zones of [`ZONES`] that need no time zone database, and so hold over PostgreSQL's whole
-/// range.
-const RULE_ZONES: &[&str] = &["UTC", "-03:30", "EST5EDT,M3.2.0,M11.1.0"];
-
 /// Instants on both sides of New York's 2024 changes, Rome's and Sydney's 2026 changes, São
 /// Paulo's 2018 changes at midnight, at local mean time, near PostgreSQL's first instant, and
 /// both infinities.
@@ -130,8 +126,9 @@ const INSTANTS: &[&str] = &[
     "-infinity",
 ];
 
-/// Instants past jiff's years, which only the zones that need no database read.
 const FAR: &[&str] = &[
+    "9999-12-31 12:00:00+00",
+    "9999-12-31 23:59:59.999999+00",
     "294276-12-31 23:59:59.999999+00",
     "200000-06-15 12:00:00+00",
 ];
@@ -236,9 +233,8 @@ fn pg18_truncates_every_instant_in_each_session_zone() {
     for &name in ZONES {
         set_zone(&mut conn, name);
         let in_zone = zone(name);
-        let far: &[&str] = if RULE_ZONES.contains(&name) { FAR } else { &[] };
         let mut cases = Vec::new();
-        for &text in INSTANTS.iter().chain(far) {
+        for &text in INSTANTS.iter().chain(FAR) {
             let value = instant(text);
             for &unit in UNITS {
                 cases.push((

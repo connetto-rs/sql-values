@@ -24,7 +24,7 @@ pub(crate) use tznames::Meaning;
 pub use tznames::TimeZoneAbbreviationsError;
 
 use super::{
-    DateTimeError, IntervalError,
+    IntervalError,
     datetime::{date2j, days_in_month, j2date},
     interval::strtod,
     parse_interval,
@@ -157,6 +157,9 @@ const MAX_RULE_HOUR: i32 = 167;
 const DEFAULT_RULES: &str = "M3.2.0,M11.1.0";
 /// Years after which the Gregorian calendar, and so every POSIX rule, repeats.
 const YEARS_PER_REPEAT: i32 = 400;
+/// `SECSPERREPEAT`, the seconds in [`YEARS_PER_REPEAT`] Gregorian years.
+#[cfg(feature = "tzdb")]
+const SECS_PER_REPEAT: i64 = 146_097 * SECS_PER_DAY;
 
 /// Why PostgreSQL refuses a `TimeZone` setting, one variant per message or detail it raises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
@@ -629,10 +632,7 @@ impl PgTimeZone {
             return Self::from_offset_west(super::float::truncate_to_i64(west));
         }
         let zone = Self::load(setting).ok_or(TimeZoneError::InvalidValue)?;
-        if zone
-            .utc_offset(TIME_2000)
-            .is_some_and(|offset| offset % 60 != 0)
-        {
+        if zone.utc_offset(TIME_2000) % 60 != 0 {
             return Err(TimeZoneError::LeapSeconds);
         }
         Ok(zone)
@@ -708,7 +708,7 @@ impl PgTimeZone {
             .ok()
             .filter(|zone| !zone.is_unknown())?;
         let canonical = String::from(zone.iana_name().unwrap_or(file));
-        // A zone with no transitions keeps its one offset beyond jiff's years too.
+        // A zone with no transitions has one fixed offset, which `fixed_offset` reports.
         let rules = match zone.following(Timestamp::MIN).next() {
             None => {
                 let info = zone.to_offset_info(Timestamp::MIN);
@@ -768,26 +768,24 @@ impl PgTimeZone {
         }
     }
 
-    /// Seconds east of UTC in effect at `unix` seconds from 1970, as `pg_localtime` finds it, or
-    /// `None` where an IANA zone is asked about an instant outside jiff's years.
-    pub(crate) fn utc_offset(&self, unix: i64) -> Option<i32> {
+    /// Seconds east of UTC in effect at `unix` seconds from 1970, as `pg_localtime` finds it.
+    pub(crate) fn utc_offset(&self, unix: i64) -> i32 {
         match &self.rules {
-            Rules::Fixed { offset, .. } => Some(*offset),
-            Rules::Posix { rules, .. } => Some(rules.offset_at(unix)),
+            Rules::Fixed { offset, .. } => *offset,
+            Rules::Posix { rules, .. } => rules.offset_at(unix),
             #[cfg(feature = "tzdb")]
-            Rules::Iana(zone) => Some(zone.to_offset(Timestamp::from_second(unix).ok()?).seconds()),
+            Rules::Iana(zone) => zone.to_offset(iana_moment(unix).0).seconds(),
         }
     }
 
     /// The offset east of UTC and the abbreviation in effect at `unix` seconds from 1970, the
-    /// `tm_gmtoff` and `tm_zone` of `pg_localtime`, or `None` where an IANA zone is asked about an
-    /// instant outside jiff's years.
-    pub(crate) fn local_time_type(&self, unix: i64) -> Option<(i32, ZoneAbbreviation<'_>)> {
+    /// `tm_gmtoff` and `tm_zone` of `pg_localtime`.
+    pub(crate) fn local_time_type(&self, unix: i64) -> (i32, ZoneAbbreviation<'_>) {
         match &self.rules {
             Rules::Fixed {
                 offset,
                 abbreviation,
-            } => Some((*offset, ZoneAbbreviation::Borrowed(abbreviation))),
+            } => (*offset, ZoneAbbreviation::Borrowed(abbreviation)),
             Rules::Posix {
                 rules,
                 std_name,
@@ -795,32 +793,32 @@ impl PgTimeZone {
             } => {
                 let dst = rules.dst_at(unix);
                 let name = if dst { dst_name } else { std_name };
-                Some((rules.offset(dst), ZoneAbbreviation::Borrowed(name)))
+                (rules.offset(dst), ZoneAbbreviation::Borrowed(name))
             }
             #[cfg(feature = "tzdb")]
             Rules::Iana(zone) => {
-                let info = zone.to_offset_info(Timestamp::from_second(unix).ok()?);
-                Some((info.offset().seconds(), ZoneAbbreviation::Iana(info)))
+                let info = zone.to_offset_info(iana_moment(unix).0);
+                (info.offset().seconds(), ZoneAbbreviation::Iana(info))
             }
         }
     }
 
     /// The offset east of UTC in effect at `unix` and the first transition after it, its moment
     /// and the offset east after it, as `pg_next_dst_boundary` finds them.
-    fn next_boundary(&self, unix: i64) -> Option<(i32, Option<(i64, i32)>)> {
+    fn next_boundary(&self, unix: i64) -> (i32, Option<(i64, i32)>) {
         match &self.rules {
-            Rules::Fixed { offset, .. } => Some((*offset, None)),
-            Rules::Posix { rules, .. } => {
-                Some((rules.offset_at(unix), rules.next_transition(unix)))
-            }
+            Rules::Fixed { offset, .. } => (*offset, None),
+            Rules::Posix { rules, .. } => (rules.offset_at(unix), rules.next_transition(unix)),
             #[cfg(feature = "tzdb")]
             Rules::Iana(zone) => {
-                let at = Timestamp::from_second(unix).ok()?;
-                let next = zone
-                    .following(at)
-                    .next()
-                    .map(|change| (change.timestamp().as_second(), change.offset().seconds()));
-                Some((zone.to_offset(at).seconds(), next))
+                let (at, shift) = iana_moment(unix);
+                let next = zone.following(at).next().map(|change| {
+                    (
+                        change.timestamp().as_second() + shift,
+                        change.offset().seconds(),
+                    )
+                });
+                (zone.to_offset(at).seconds(), next)
             }
         }
     }
@@ -828,16 +826,15 @@ impl PgTimeZone {
     /// The offset east of UTC that `DetermineTimeZoneOffsetInternal` gives a local clock of
     /// `local` seconds from 1970 read as UTC: the offset at the first transition after the
     /// clock less a day, a clock the change skips taking the offset before it and one it repeats
-    /// the offset after it. `None` where an IANA zone is asked about a clock outside jiff's
-    /// years.
-    pub(crate) fn local_offset(&self, local: i64) -> Option<i32> {
-        let (before, next) = self.next_boundary(local - SECS_PER_DAY)?;
+    /// the offset after it.
+    pub(crate) fn local_offset(&self, local: i64) -> i32 {
+        let (before, next) = self.next_boundary(local - SECS_PER_DAY);
         let Some((boundary, after)) = next else {
-            return Some(before);
+            return before;
         };
         let before_time = local - i64::from(before);
         let after_time = local - i64::from(after);
-        Some(if before_time < boundary && after_time < boundary {
+        if before_time < boundary && after_time < boundary {
             before
         } else if before_time >= boundary && after_time >= boundary {
             after
@@ -845,8 +842,33 @@ impl PgTimeZone {
             before
         } else {
             after
-        })
+        }
     }
+
+    /// `DetermineTimeZoneAbbrevOffset`, the offset the uppercased `abbreviation` had at the
+    /// local clock of `local` seconds from 1970 read as UTC, or the zone's own offset there when
+    /// the zone never used it.
+    pub(crate) fn abbreviation_offset(&self, abbreviation: &str, local: i64) -> i32 {
+        let zone_offset = self.local_offset(local);
+        self.interpret_abbreviation(abbreviation, local - i64::from(zone_offset))
+            .map_or(zone_offset, |meaning| meaning.offset)
+    }
+}
+
+/// The moment jiff places for an IANA zone asked about `unix` seconds from 1970, and the seconds
+/// `unix` lies past it. As `localsub` moves an instant past a zone's last transition, one past
+/// jiff's last moment moves back by whole [`YEARS_PER_REPEAT`] cycles of the zone's POSIX rule,
+/// and one before jiff's first moment, before every zone's first transition, takes jiff's first.
+#[cfg(feature = "tzdb")]
+fn iana_moment(unix: i64) -> (Timestamp, i64) {
+    let last = Timestamp::MAX.as_second();
+    let shift = if unix > last {
+        ((unix - last - 1) / SECS_PER_REPEAT + 1) * SECS_PER_REPEAT
+    } else {
+        0
+    };
+    let moment = Timestamp::from_second(unix - shift).unwrap_or(Timestamp::MIN);
+    (moment, shift)
 }
 
 impl PgTimeZone {
@@ -903,11 +925,6 @@ impl PgTimeZone {
     /// `pg_interpret_timezone_abbrev`, the meaning the uppercased `abbreviation` had in the zone
     /// at `unix` seconds from 1970: the latest before it, else the one before every transition,
     /// else the first after it.
-    ///
-    /// # Errors
-    ///
-    /// [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about an instant outside
-    /// jiff's years.
     pub(crate) fn interpret_abbreviation(
         &self,
         abbreviation: &str,
@@ -916,11 +933,11 @@ impl PgTimeZone {
             expect(unused_variables, reason = "only an IANA zone reads the instant")
         )]
         unix: i64,
-    ) -> Result<Option<AbbreviationUse>, DateTimeError> {
+    ) -> Option<AbbreviationUse> {
         match &self.rules {
-            Rules::Fixed { .. } | Rules::Posix { .. } => Ok(self
+            Rules::Fixed { .. } | Rules::Posix { .. } => self
                 .abbreviation_is_known(abbreviation)
-                .map(|(use_, _)| use_)),
+                .map(|(use_, _)| use_),
             #[cfg(feature = "tzdb")]
             Rules::Iana(zone) => interpret_iana_abbreviation(zone, abbreviation, unix),
         }
@@ -933,9 +950,9 @@ fn interpret_iana_abbreviation(
     zone: &TimeZone,
     abbreviation: &str,
     unix: i64,
-) -> Result<Option<AbbreviationUse>, DateTimeError> {
-    let at = Timestamp::from_second(unix).map_err(|_| DateTimeError::OutsideJiffRange)?;
-    let after = Timestamp::from_second(unix + 1).unwrap_or(Timestamp::MAX);
+) -> Option<AbbreviationUse> {
+    let (at, _) = iana_moment(unix);
+    let after = Timestamp::from_second(at.as_second() + 1).unwrap_or(Timestamp::MAX);
     let matching = |abbreviation_used: &str, offset: jiff::tz::Offset, dst: jiff::tz::Dst| {
         (abbreviation_used == abbreviation).then(|| AbbreviationUse {
             offset: offset.seconds(),
@@ -946,16 +963,15 @@ fn interpret_iana_abbreviation(
         .preceding(after)
         .find_map(|change| matching(change.abbreviation(), change.offset(), change.dst()))
     {
-        return Ok(Some(found));
+        return Some(found);
     }
     let first = zone.to_offset_info(Timestamp::MIN);
     if let Some(found) = matching(first.abbreviation(), first.offset(), first.dst()) {
-        return Ok(Some(found));
+        return Some(found);
     }
-    Ok(zone
-        .following(at)
+    zone.following(at)
         .take_while(|change| change.timestamp().as_second() <= ABBREVIATION_SCAN_END)
-        .find_map(|change| matching(change.abbreviation(), change.offset(), change.dst())))
+        .find_map(|change| matching(change.abbreviation(), change.offset(), change.dst()))
 }
 
 /// The meaning of `abbreviation` in a POSIX zone, whose `tzparse` types are the standard one,

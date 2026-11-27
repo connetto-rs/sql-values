@@ -3,8 +3,8 @@
 
 use super::{
     DateTimeError, POSTGRES_EPOCH_JDATE, PgDate, PgTime, PgTimeTz, PgTimestamp, PgTimestampTz,
-    USECS_PER_DAY, USECS_PER_HOUR, USECS_PER_MINUTE, USECS_PER_SEC, abbreviation_offset, date2j,
-    days_in_month, is_valid_julian, local_offset, tm2timestamp,
+    UNIX_TO_POSTGRES_SECS, USECS_PER_DAY, USECS_PER_HOUR, USECS_PER_MINUTE, USECS_PER_SEC,
+    abbreviation_offset, date2j, days_in_month, is_valid_julian, local_offset, tm2timestamp,
 };
 use super::{
     decode::{
@@ -155,38 +155,28 @@ fn by_date_order<'a, T: PartialEq>(
     }
 }
 
-/// The local clock of `tm` to the second, as `DetermineTimeZoneOffset` reads it, in microseconds
-/// from 2000-01-01, or `None` where that overflows.
-fn local_seconds(tm: &Tm) -> Option<i64> {
+/// The local clock of `tm` to the second, as `DetermineTimeZoneOffset` reads it, in seconds
+/// from 1970.
+fn local_seconds(tm: &Tm) -> i64 {
     let days = i64::from(date2j(tm.year, tm.mon, tm.mday)) - i64::from(POSTGRES_EPOCH_JDATE);
     let clock = (i64::from(tm.hour) * 60 + i64::from(tm.min)) * 60 + i64::from(tm.sec);
-    days.checked_mul(USECS_PER_DAY)?
-        .checked_add(clock * USECS_PER_SEC)
+    days * (USECS_PER_DAY / USECS_PER_SEC) + clock + UNIX_TO_POSTGRES_SECS
 }
 
 /// `DetermineTimeZoneOffset` and `DetermineTimeZoneAbbrevOffset` for a `timetz`, whose date
 /// may lie anywhere `ValidateDate` accepts. Outside `IS_VALID_JULIAN` PostgreSQL takes UTC and
-/// reads the abbreviation at the Unix epoch, and a date it can place that jiff cannot is
-/// [`DateTimeError::OutsideJiffRange`].
-fn time_zone_offset(
-    zone: &PgTimeZone,
-    abbreviation: Option<&str>,
-    tm: &Tm,
-) -> Result<i32, DateTimeError> {
+/// reads the abbreviation at the Unix epoch.
+fn time_zone_offset(zone: &PgTimeZone, abbreviation: Option<&str>, tm: &Tm) -> i32 {
     if !is_valid_julian(tm.year, tm.mon) {
-        return match abbreviation {
-            Some(abbreviation) => Ok(zone
-                .interpret_abbreviation(abbreviation, 0)?
-                .map_or(0, |meaning| meaning.offset)),
-            None => Ok(0),
-        };
+        return abbreviation
+            .and_then(|abbreviation| zone.interpret_abbreviation(abbreviation, 0))
+            .map_or(0, |meaning| meaning.offset);
     }
-    let local = local_seconds(tm).ok_or(DateTimeError::OutsideJiffRange)?;
+    let local = local_seconds(tm);
     match abbreviation {
-        Some(abbreviation) => abbreviation_offset(zone, abbreviation, local),
-        None => local_offset(zone, local),
+        Some(abbreviation) => zone.abbreviation_offset(abbreviation, local),
+        None => zone.local_offset(local),
     }
-    .map_err(|_| DateTimeError::OutsideJiffRange)
 }
 
 impl PgDate {
@@ -284,9 +274,8 @@ impl PgTimestampTz {
     ///
     /// # Errors
     ///
-    /// The [`DateTimeError`] PostgreSQL raises, the session state the literal needs and the
-    /// context lacks, or [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about
-    /// a clock outside jiff's years.
+    /// The [`DateTimeError`] PostgreSQL raises, or the session state the literal needs and the
+    /// context lacks.
     ///
     /// ```
     /// use sql_values::postgres::{DateTimeError, InputContext, PgTimeZone, PgTimestampTz};
@@ -342,11 +331,11 @@ impl PgTimestampTz {
         };
         let offset = match &decoded.zone {
             ZoneSource::West(west) => -*west,
-            ZoneSource::Abbreviation { zone, upper } => abbreviation_offset(zone, upper, local()?)?,
-            ZoneSource::Named(zone) => local_offset(zone, local()?)?,
+            ZoneSource::Abbreviation { zone, upper } => abbreviation_offset(zone, upper, local()?),
+            ZoneSource::Named(zone) => local_offset(zone, local()?),
             ZoneSource::Session => {
                 let zone = context.time_zone.ok_or(DateTimeError::NeedsTimeZone)?;
-                local_offset(zone, local()?)?
+                local_offset(zone, local()?)
             }
         };
         tm2timestamp(tm.year, tm.mon, tm.mday, tm.clock(), offset)
@@ -397,9 +386,8 @@ impl PgTimeTz {
     ///
     /// # Errors
     ///
-    /// The [`DateTimeError`] PostgreSQL raises, the session state the literal needs and the
-    /// context lacks, or [`DateTimeError::OutsideJiffRange`] where an IANA zone is asked about
-    /// a date outside jiff's years.
+    /// The [`DateTimeError`] PostgreSQL raises, or the session state the literal needs and the
+    /// context lacks.
     ///
     /// ```
     /// use sql_values::postgres::{
@@ -443,14 +431,12 @@ impl PgTimeTz {
         };
         let offset = match &zone {
             ZoneSource::West(west) => -*west,
-            ZoneSource::Named(zone) => time_zone_offset(zone, None, &tm)?,
-            ZoneSource::Abbreviation { zone, upper } => {
-                time_zone_offset(zone, Some(upper), &at()?)?
-            }
+            ZoneSource::Named(zone) => time_zone_offset(zone, None, &tm),
+            ZoneSource::Abbreviation { zone, upper } => time_zone_offset(zone, Some(upper), &at()?),
             ZoneSource::Session => {
                 let at = at()?;
                 let zone = context.time_zone.ok_or(DateTimeError::NeedsTimeZone)?;
-                time_zone_offset(zone, None, &at)?
+                time_zone_offset(zone, None, &at)
             }
         };
         Ok(Self {

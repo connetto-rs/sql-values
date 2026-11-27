@@ -582,7 +582,7 @@ pub(crate) fn local_fields(
     if !at.is_finite() {
         return Err(DateTimeError::TimestampOutOfRange);
     }
-    let offset = utc_offset(zone, at.pg_micros())?;
+    let offset = utc_offset(zone, at.pg_micros());
     let (year, mon, mday, clock) = timestamp2tm(at.pg_micros() + i64::from(offset) * USECS_PER_SEC);
     let tm = Tm {
         year,
