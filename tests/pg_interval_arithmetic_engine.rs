@@ -338,6 +338,57 @@ fn pg18_subtracts_every_pair_of_timestamps() {
     compare(&mut conn, cases);
 }
 
+/// `timestamptz - timestamptz` of every pair of instants, near and past jiff's years alike, since
+/// subtracting two instants consults no zone.
+#[test]
+fn pg18_subtracts_every_pair_of_timestamptzs() {
+    let mut conn = connect();
+    let instant = |text: &str| {
+        PgTimestampTz::parse(text, InputContext::new())
+            .unwrap_or_else(|error| panic!("{text:?}: {error}"))
+    };
+    let mut cases = Vec::new();
+    for &later in INSTANTS.iter().chain(FAR_INSTANTS) {
+        for &earlier in INSTANTS.iter().chain(FAR_INSTANTS) {
+            cases.push((
+                format!(
+                    "SELECT ({}::timestamptz - {}::timestamptz)::text",
+                    quoted(later),
+                    quoted(earlier)
+                ),
+                Answer::of(PgInterval::timestamptz_difference(
+                    instant(later),
+                    instant(earlier),
+                )),
+            ));
+        }
+    }
+    compare(&mut conn, cases);
+}
+
+#[test]
+fn pg18_subtracts_every_pair_of_times() {
+    let mut conn = connect();
+    let mut cases = Vec::new();
+    for &later in TIMES {
+        for &earlier in TIMES {
+            let difference = PgInterval::time_difference(
+                parse_time(later).unwrap_or_else(|| panic!("{later:?}")),
+                parse_time(earlier).unwrap_or_else(|| panic!("{earlier:?}")),
+            );
+            cases.push((
+                format!(
+                    "SELECT ({}::time - {}::time)::text",
+                    quoted(later),
+                    quoted(earlier)
+                ),
+                Answer::Value(difference.to_string()),
+            ));
+        }
+    }
+    compare(&mut conn, cases);
+}
+
 #[test]
 fn pg18_shifts_every_time() {
     let mut conn = connect();

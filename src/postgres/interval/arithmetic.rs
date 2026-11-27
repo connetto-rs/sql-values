@@ -447,7 +447,35 @@ impl PgInterval {
         later: PgTimestamp,
         earlier: PgTimestamp,
     ) -> Result<Self, ShiftError> {
-        let (later, earlier) = (later.pg_micros(), earlier.pg_micros());
+        Self::stored_difference(later.pg_micros(), earlier.pg_micros())
+    }
+
+    /// PostgreSQL's `timestamptz_mi`, `later - earlier`, the elapsed time between two instants
+    /// carried into days as [`timestamp_difference`](Self::timestamp_difference) carries it. No
+    /// zone is consulted, so a day of a daylight saving change counts its 23 or 25 hours.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`timestamp_difference`](Self::timestamp_difference).
+    ///
+    /// ```
+    /// use sql_values::postgres::{InputContext, PgInterval, PgTimestampTz};
+    ///
+    /// let instant = |text| PgTimestampTz::parse(text, InputContext::new()).unwrap();
+    /// let later = instant("2024-11-03 12:00:00-05");
+    /// let earlier = instant("2024-11-02 12:00:00-04");
+    /// let span = PgInterval::timestamptz_difference(later, earlier).unwrap();
+    /// assert_eq!(span.to_string(), "1 day 01:00:00");
+    /// ```
+    pub fn timestamptz_difference(
+        later: PgTimestampTz,
+        earlier: PgTimestampTz,
+    ) -> Result<Self, ShiftError> {
+        Self::stored_difference(later.pg_micros(), earlier.pg_micros())
+    }
+
+    /// `timestamp_mi` over the stored microseconds, which `timestamptz_mi` shares.
+    fn stored_difference(later: i64, earlier: i64) -> Result<Self, ShiftError> {
         let infinite = |micros: i64| micros == i64::MAX || micros == i64::MIN;
         if infinite(later) || infinite(earlier) {
             return match (later, earlier) {
@@ -470,6 +498,29 @@ impl PgInterval {
             days,
             microseconds: time % USECS_PER_DAY,
         })
+    }
+
+    /// PostgreSQL's `time_mi`, `later - earlier`, the clocks' difference kept whole in the
+    /// microseconds, never wrapped within the day nor carried into days.
+    ///
+    /// ```
+    /// use sql_values::postgres::{PgInterval, parse_time};
+    ///
+    /// let midnight = parse_time("00:00:00").unwrap();
+    /// let end = parse_time("24:00:00").unwrap();
+    /// assert_eq!(PgInterval::time_difference(end, midnight).to_string(), "24:00:00");
+    /// let late = parse_time("23:30:00").unwrap();
+    /// let early = parse_time("00:30:00").unwrap();
+    /// assert_eq!(PgInterval::time_difference(early, late).to_string(), "-23:00:00");
+    /// ```
+    #[must_use]
+    pub const fn time_difference(later: PgTime, earlier: PgTime) -> Self {
+        // Both clocks lie within one day, so their difference fits.
+        Self {
+            months: 0,
+            days: 0,
+            microseconds: later.micros() - earlier.micros(),
+        }
     }
 
     /// PostgreSQL's `time_pl_interval`, `at + self`: the clock moved by the interval's
