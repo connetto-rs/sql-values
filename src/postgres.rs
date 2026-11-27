@@ -1,9 +1,11 @@
-//! PostgreSQL 18's values: their input and output functions, comparisons, arithmetic and casts.
+//! PostgreSQL 18's values: their input and output functions, comparisons, arithmetic, casts and
+//! truncation.
 
 mod array;
 mod bpchar;
 mod bytea;
 mod cast;
+mod date_trunc;
 mod datetime;
 mod float;
 mod float8;
@@ -21,6 +23,7 @@ pub use cast::{
     CastError, CastTarget, CastValue, CharLength, Literal, PgType, cast_literal, cast_value,
     number_constant,
 };
+pub use date_trunc::{DateTruncError, DateTruncField};
 pub use datetime::{
     DateArithmeticError, DateOrder, DateTimeError, InputContext, PgDate, PgTime, PgTimeTz,
     PgTimestamp, PgTimestampTz, parse_date, parse_time, parse_timestamp, parse_timestamp_tz,
