@@ -333,6 +333,48 @@ fn pg18_reads_every_time_literal_under_each_order() {
     );
 }
 
+/// `timetz_in` on every time literal under session zones with one offset on every date,
+/// which the crate reads without the transaction's start.
+#[test]
+#[cfg_attr(not(feature = "tzdb"), ignore = "reads IANA zone names")]
+fn pg18_reads_every_time_literal_in_a_fixed_zone_without_the_current_time() {
+    let mut conn = pg18_conn();
+    let mut mismatches = Vec::new();
+    let mut clocked = Vec::new();
+    for zone_name in ["UTC", "+05:30", "-2", "EST5EDT,0/0,J365/26"] {
+        let zone = PgTimeZone::parse(zone_name).expect("zone");
+        set_timezone(&mut conn, zone_name);
+        let context = InputContext::new()
+            .with_time_zone(&zone)
+            .with_date_order(DateOrder::Mdy);
+        for &text in TIMES {
+            let got = PgTimeTz::parse(text, context);
+            if got == Err(DateTimeError::NeedsCurrentTime) {
+                clocked.push(text);
+                continue;
+            }
+            let expression = format!("{}::timetz", quoted(text));
+            let (got, expected) = (worded(got), pg18_answer(&mut conn, &expression));
+            if got != expected {
+                mismatches.push(format!(
+                    "{zone_name} {expression}: crate {got:?}, PostgreSQL {expected:?}"
+                ));
+            }
+        }
+    }
+    set_timezone(&mut conn, "UTC");
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    // Only `now` and an abbreviation whose offset changes with the date need the current time.
+    let clock_literals = [
+        "12:00 MSK",
+        "now",
+        "now 12:00",
+        "now +05",
+        "now Europe/Rome",
+    ];
+    assert_eq!(clocked, clock_literals.repeat(4));
+}
+
 /// `timetz_cmp` on every pair of the time literals that read as `timetz`.
 #[test]
 fn pg18_orders_every_timetz_pair() {

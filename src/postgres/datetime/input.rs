@@ -382,7 +382,8 @@ impl PgTime {
 impl PgTimeTz {
     /// PostgreSQL's `timetz_in`, reading every spelling `DecodeTimeOnly` reads. A time without
     /// an offset, or with a zone whose offset changes, takes the zone's offset on the date the
-    /// literal writes, or else on the current date in the context's time zone.
+    /// literal writes, or else on the current date in the context's time zone. A context time
+    /// zone with one offset on every date gives it without the current date.
     ///
     /// # Errors
     ///
@@ -401,6 +402,8 @@ impl PgTimeTz {
     /// #[cfg(feature = "tzdb")]
     /// assert_eq!(read("2026-07-01 12:00 Europe/Rome", context).unwrap(), "12:00:00+02");
     /// assert_eq!(read("12:00", context), Err(DateTimeError::NeedsCurrentTime));
+    /// let gmt = PgTimeZone::parse("GMT").unwrap();
+    /// assert_eq!(read("12:00", context.with_time_zone(&gmt)).unwrap(), "12:00:00+00");
     /// #[cfg(feature = "tzdb")]
     /// {
     ///     let rome = PgTimeZone::parse("Europe/Rome").unwrap();
@@ -433,11 +436,14 @@ impl PgTimeTz {
             ZoneSource::West(west) => -*west,
             ZoneSource::Named(zone) => time_zone_offset(zone, None, &tm),
             ZoneSource::Abbreviation { zone, upper } => time_zone_offset(zone, Some(upper), &at()?),
-            ZoneSource::Session => {
-                let at = at()?;
-                let zone = context.time_zone.ok_or(DateTimeError::NeedsTimeZone)?;
-                time_zone_offset(zone, None, &at)
-            }
+            ZoneSource::Session => match context.time_zone.and_then(PgTimeZone::fixed_offset) {
+                Some(offset) if !dated => offset,
+                _ => {
+                    let at = at()?;
+                    let zone = context.time_zone.ok_or(DateTimeError::NeedsTimeZone)?;
+                    time_zone_offset(zone, None, &at)
+                }
+            },
         };
         Ok(Self {
             time: tm.clock(),

@@ -1,6 +1,6 @@
 use sql_values::postgres::{
-    DateTimeError, InputContext, PgTimeTz, PgTimestampTz, parse_date, parse_time, parse_timestamp,
-    parse_timestamp_tz,
+    DateTimeError, InputContext, PgTimeTz, PgTimeZone, PgTimestampTz, parse_date, parse_time,
+    parse_timestamp, parse_timestamp_tz,
 };
 
 /// Which reader a corpus entry goes through.
@@ -343,6 +343,33 @@ fn timetz_without_a_date_needs_the_current_time() {
             "{text}"
         );
     }
+}
+
+/// A session zone with one offset on every date gives a `timetz` without a date that offset
+/// with no current time, while a zone whose offset changes still needs it.
+#[test]
+fn timetz_without_a_date_takes_a_fixed_session_offset() {
+    for (setting, expected) in [
+        ("GMT", "09:00:00+00"),
+        ("+05:30", "09:00:00-05:30"),
+        ("-2", "09:00:00-02"),
+        ("EST5EDT,0/0,J365/26", "09:00:00-04"),
+    ] {
+        let zone = PgTimeZone::parse(setting).expect("a fixed zone");
+        let context = InputContext::new().with_time_zone(&zone);
+        let read = |text| PgTimeTz::parse(text, context).map(|t| t.to_string());
+        assert_eq!(read("09:00:00").as_deref(), Ok(expected), "{setting}");
+        assert_eq!(
+            read("now"),
+            Err(DateTimeError::NeedsCurrentTime),
+            "{setting}"
+        );
+    }
+    let varying = PgTimeZone::parse("EST5EDT").expect("a zone with daylight saving time");
+    assert_eq!(
+        PgTimeTz::parse("09:00:00", InputContext::new().with_time_zone(&varying)),
+        Err(DateTimeError::NeedsCurrentTime)
+    );
 }
 
 /// A `timestamptz` written without an offset needs the session's time zone.
