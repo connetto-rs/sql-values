@@ -135,6 +135,7 @@ pub fn pg_error(message: &str, detail: Option<&str>) -> CastError {
         PgType::Time,
         PgType::TimeTz,
         PgType::Jsonb,
+        PgType::Uuid,
     ];
     let mut errors = vec![
         CastError::MalformedArrayLiteral,

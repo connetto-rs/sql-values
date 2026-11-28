@@ -14,6 +14,7 @@ mod integer;
 mod interval;
 mod jsonb;
 mod numeric;
+mod uuid;
 mod value;
 mod zone;
 
@@ -41,5 +42,6 @@ pub use jsonb::{JsonbError, JsonbKind, PgJsonb};
 #[cfg(feature = "decimal")]
 pub use numeric::NonFiniteNumeric;
 pub use numeric::{NumericError, NumericTypmod, PgNumeric};
+pub use uuid::{PgUuid, UuidError};
 pub use value::PgValue;
 pub use zone::{PgTimeZone, TimeZoneAbbreviations, TimeZoneAbbreviationsError, TimeZoneError};

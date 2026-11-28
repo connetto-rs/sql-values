@@ -11,6 +11,7 @@ use super::{
     integer::IntegerType,
     jsonb::{JsonbError, JsonbKind, PgJsonb},
     numeric::{NumericError, NumericTypmod, PgNumeric},
+    uuid::{PgUuid, UuidError},
 };
 
 /// A literal as written before `::`, its quotes and escapes already decoded.
@@ -56,6 +57,8 @@ pub enum CastTarget {
     TimeTz(Option<u8>),
     /// `jsonb`.
     Jsonb,
+    /// `uuid`.
+    Uuid,
 }
 
 /// The length of a `varchar(n)` or `char(n)` type, in characters.
@@ -126,6 +129,8 @@ pub enum PgType {
     Jsonb,
     /// `interval`.
     Interval,
+    /// `uuid`.
+    Uuid,
 }
 
 impl fmt::Display for PgType {
@@ -153,6 +158,7 @@ impl PgType {
             Self::TimeTz => "time with time zone",
             Self::Jsonb => "jsonb",
             Self::Interval => "interval",
+            Self::Uuid => "uuid",
         }
     }
 
@@ -186,6 +192,7 @@ impl CastTarget {
             Self::Time(_) => PgType::Time,
             Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb => PgType::Jsonb,
+            Self::Uuid => PgType::Uuid,
         }
     }
 }
@@ -221,6 +228,8 @@ pub enum CastValue {
     TimeTz(PgTimeTz),
     /// A `jsonb`.
     Jsonb(PgJsonb),
+    /// A `uuid`.
+    Uuid(PgUuid),
 }
 
 /// Why PostgreSQL refuses a cast, one variant per message it raises, or why this crate declines
@@ -382,6 +391,11 @@ pub enum CastError {
 ///     from: PgType::Integer,
 ///     to: PgType::Jsonb,
 /// }));
+///
+/// assert_eq!(
+///     cast(Literal::Quoted("{A0EEBC999C0B4EF8BB6D6BB9BD380A11}"), CastTarget::Uuid).unwrap(),
+///     "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+/// );
 /// ```
 pub fn cast_literal(literal: Literal<'_>, target: CastTarget) -> Result<CastValue, CastError> {
     match literal {
@@ -521,7 +535,8 @@ fn cast_jsonb(value: PgJsonb, target: CastTarget) -> Result<Option<CastValue>, C
         | CastTarget::Timestamp(_)
         | CastTarget::TimestampTz(_)
         | CastTarget::Time(_)
-        | CastTarget::TimeTz(_) => Err(CastError::CannotCast {
+        | CastTarget::TimeTz(_)
+        | CastTarget::Uuid => Err(CastError::CannotCast {
             from: PgType::Jsonb,
             to,
         }),
@@ -605,6 +620,7 @@ fn cast_non_null(value: CastValue, target: CastTarget) -> Result<CastValue, Cast
         (CastValue::TimeTz(time), CastTarget::TimeTz(precision)) => {
             Ok(CastValue::TimeTz(time.adjust_for_typmod(precision)))
         }
+        (CastValue::Uuid(value), CastTarget::Uuid) => Ok(CastValue::Uuid(value)),
         _ => Err(cannot_cast),
     }
 }
@@ -636,6 +652,7 @@ impl CastValue {
             Self::Time(_) => PgType::Time,
             Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb(_) => PgType::Jsonb,
+            Self::Uuid(_) => PgType::Uuid,
         }
     }
 }
@@ -783,6 +800,9 @@ fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
         CastTarget::Jsonb => PgJsonb::parse(text)
             .map(CastValue::Jsonb)
             .map_err(jsonb_input_error),
+        CastTarget::Uuid => PgUuid::parse(text)
+            .map(CastValue::Uuid)
+            .map_err(|UuidError::InvalidInputSyntax| CastError::InvalidInputSyntax(PgType::Uuid)),
     }
 }
 
@@ -964,6 +984,7 @@ impl fmt::Display for CastValue {
             Self::Time(time) => write!(f, "{time}"),
             Self::TimeTz(time) => write!(f, "{time}"),
             Self::Jsonb(value) => write!(f, "{value}"),
+            Self::Uuid(value) => write!(f, "{value}"),
         }
     }
 }
