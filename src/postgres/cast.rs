@@ -7,8 +7,12 @@ use core::fmt;
 
 use super::{
     bpchar::PgBpchar,
-    datetime::{DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimestamp, PgTimestampTz},
+    datetime::{
+        DateTimeError, InputContext, PgDate, PgTime, PgTimeTz, PgTimestamp, PgTimestampTz,
+        USECS_PER_DAY,
+    },
     integer::IntegerType,
+    interval::{IntervalError, IntervalTypmod, PgInterval, parse_interval, parse_interval_typmod},
     jsonb::{JsonbError, JsonbKind, PgJsonb},
     numeric::{NumericError, NumericTypmod, PgNumeric},
     uuid::{PgUuid, UuidError},
@@ -59,6 +63,9 @@ pub enum CastTarget {
     Jsonb,
     /// `uuid`.
     Uuid,
+    /// `interval`, with the fields it keeps and its fractional-second digits as in
+    /// `interval day to second(3)`.
+    Interval(IntervalTypmod),
 }
 
 /// The length of a `varchar(n)` or `char(n)` type, in characters.
@@ -193,6 +200,7 @@ impl CastTarget {
             Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb => PgType::Jsonb,
             Self::Uuid => PgType::Uuid,
+            Self::Interval(_) => PgType::Interval,
         }
     }
 }
@@ -230,6 +238,9 @@ pub enum CastValue {
     Jsonb(PgJsonb),
     /// A `uuid`.
     Uuid(PgUuid),
+    /// An `interval`, printed under the default `IntervalStyle` of `postgres`, equal to another
+    /// as PostgreSQL finds it, with a month as 30 days and a day as 24 hours.
+    Interval(PgInterval),
 }
 
 /// Why PostgreSQL refuses a cast, one variant per message it raises, or why this crate declines
@@ -274,6 +285,15 @@ pub enum CastError {
     /// An offset of 16 hours or more, or with minutes or seconds of 60 or more.
     #[error("time zone displacement out of range")]
     TimeZoneDisplacementOutOfRange,
+    /// A number of an interval's text beyond the integer its field accumulates in.
+    #[error("interval field value out of range")]
+    IntervalFieldValueOutOfRange,
+    /// An interval beyond the type, read or rounded to a precision.
+    #[error("interval out of range")]
+    IntervalOutOfRange,
+    /// An infinite `interval` cast to `time`.
+    #[error("cannot convert infinite interval to time")]
+    CannotConvertInfiniteIntervalToTime,
     /// A value of a type with no cast to the target.
     #[error("cannot cast type {from} to {to}")]
     CannotCast {
@@ -325,6 +345,10 @@ pub enum CastError {
 /// The value PostgreSQL 18's explicit cast `literal::target` produces, or the error it raises,
 /// with a database encoding of UTF-8.
 ///
+/// A string constant is read by the target's input function, an interval type's with the fields
+/// and precision of the target, which `coerce_type` gives `interval_in` alone. So
+/// `'1.75'::interval minute` reads `1.75` as minutes, where a `text` value reads as seconds.
+///
 /// # Errors
 ///
 /// The [`CastError`] PostgreSQL raises, or [`CastError::Unsupported`] for a literal or cast this
@@ -332,7 +356,8 @@ pub enum CastError {
 ///
 /// ```
 /// use sql_values::postgres::{
-///     CastError, CastTarget, CharLength, Literal, NumericTypmod, PgType, cast_literal,
+///     CastError, CastTarget, CharLength, IntervalFields, IntervalTypmod, Literal, NumericTypmod,
+///     PgType, cast_literal,
 /// };
 ///
 /// let cast = |literal, target| cast_literal(literal, target).map(|value| value.to_string());
@@ -396,6 +421,13 @@ pub enum CastError {
 ///     cast(Literal::Quoted("{A0EEBC999C0B4EF8BB6D6BB9BD380A11}"), CastTarget::Uuid).unwrap(),
 ///     "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
 /// );
+///
+/// let minute = IntervalTypmod::new(Some(IntervalFields::Minute), None).unwrap();
+/// assert_eq!(cast(Literal::Quoted("1.75"), CastTarget::Interval(minute)).unwrap(), "00:01:00");
+/// assert_eq!(
+///     cast(Literal::Quoted("178956971 years"), CastTarget::Interval(minute)),
+///     Err(CastError::IntervalOutOfRange),
+/// );
 /// ```
 pub fn cast_literal(literal: Literal<'_>, target: CastTarget) -> Result<CastValue, CastError> {
     match literal {
@@ -443,10 +475,11 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 /// coercion does, and a value cast to a character type is printed by its type's output function,
 /// `boolean` as `true` or `false`. Between the other types the cast is the function `pg_cast`
 /// names, `int4_bool`, `bool_int4`, the integer narrowings, `int*_numeric`, `numeric_int*`,
-/// `date_timestamp`, `timestamp_date`, `timestamp_time`, `timetz_time`, `jsonb_bool`,
-/// `jsonb_numeric` and `jsonb_int*`, the last three followed by `numeric_int*`. A `jsonb` `null`
-/// cast to `boolean`, `numeric` or an integer type and an infinite `timestamp` cast to `time` are
-/// `NULL`, the only casts giving `NULL`. The length coercion of the target's modifier follows,
+/// `date_timestamp`, `timestamp_date`, `timestamp_time`, `timetz_time`, `time_interval`,
+/// `interval_time`, `jsonb_bool`, `jsonb_numeric` and `jsonb_int*`, the last three followed by
+/// `numeric_int*`. A `jsonb` `null` cast to `boolean`, `numeric` or an integer type and an
+/// infinite `timestamp` cast to `time` are `NULL`, the only casts giving `NULL`. The length
+/// coercion of the target's modifier follows, which for an interval type is `interval_scale`,
 /// and a pair `pg_cast` has no cast for raises [`CastError::CannotCast`].
 ///
 /// # Errors
@@ -456,8 +489,8 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 ///
 /// ```
 /// use sql_values::postgres::{
-///     CastError, CastTarget, CastValue, JsonbKind, PgJsonb, PgNumeric, PgTime, PgTimestamp,
-///     PgType, cast_value,
+///     CastError, CastTarget, CastValue, IntervalFields, IntervalTypmod, JsonbKind, PgInterval,
+///     PgJsonb, PgNumeric, PgTime, PgTimestamp, PgType, cast_value, parse_interval,
 /// };
 ///
 /// let cast = |value, target| {
@@ -498,6 +531,19 @@ pub fn number_constant(text: &str) -> Result<CastValue, CastError> {
 /// assert_eq!(cast(CastValue::Time(late), CastTarget::Time(Some(1))), some("24:00:00"));
 /// let endless = CastValue::Timestamp(PgTimestamp::INFINITY);
 /// assert_eq!(cast(endless, CastTarget::Time(None)), Ok(None));
+///
+/// let hour = CastTarget::Interval(IntervalTypmod::new(Some(IntervalFields::Hour), None).unwrap());
+/// let span = CastValue::Interval(parse_interval("90 minutes").unwrap());
+/// assert_eq!(cast(span, hour), some("01:00:00"));
+/// let minute = IntervalTypmod::new(Some(IntervalFields::Minute), None).unwrap();
+/// let seconds = cast_value(CastValue::Text("1.75".into()), CastTarget::Interval(minute));
+/// assert_eq!(seconds.unwrap().unwrap().to_string(), "00:00:00");
+/// let span = CastValue::Interval(parse_interval("-1 days -01:00:00").unwrap());
+/// assert_eq!(cast(span, CastTarget::Time(None)), some("23:00:00"));
+/// assert_eq!(
+///     cast(CastValue::Interval(PgInterval::INFINITY), CastTarget::Time(None)),
+///     Err(CastError::CannotConvertInfiniteIntervalToTime),
+/// );
 /// ```
 pub fn cast_value(value: CastValue, target: CastTarget) -> Result<Option<CastValue>, CastError> {
     match (value, target) {
@@ -536,7 +582,8 @@ fn cast_jsonb(value: PgJsonb, target: CastTarget) -> Result<Option<CastValue>, C
         | CastTarget::TimestampTz(_)
         | CastTarget::Time(_)
         | CastTarget::TimeTz(_)
-        | CastTarget::Uuid => Err(CastError::CannotCast {
+        | CastTarget::Uuid
+        | CastTarget::Interval(_) => Err(CastError::CannotCast {
             from: PgType::Jsonb,
             to,
         }),
@@ -551,12 +598,12 @@ fn cast_non_null(value: CastValue, target: CastTarget) -> Result<CastValue, Cast
         to: target.pg_type(),
     };
     match (value, target) {
-        (CastValue::Text(text), _) => cast_quoted(&text, target),
+        (CastValue::Text(text), _) => cast_text(&text, target),
         // `rtrim1`, dropping the blanks `char(n)` pads with.
         (CastValue::Bpchar(value), CastTarget::Text | CastTarget::Varchar(_)) => {
             Ok(character(value.as_text(), target))
         }
-        (CastValue::Bpchar(value), _) => cast_quoted(value.as_str(), target),
+        (CastValue::Bpchar(value), _) => cast_text(value.as_str(), target),
         (
             CastValue::TimestampTz(_),
             CastTarget::Date
@@ -621,6 +668,27 @@ fn cast_non_null(value: CastValue, target: CastTarget) -> Result<CastValue, Cast
             Ok(CastValue::TimeTz(time.adjust_for_typmod(precision)))
         }
         (CastValue::Uuid(value), CastTarget::Uuid) => Ok(CastValue::Uuid(value)),
+        // `interval_time`, the clock of the microseconds, wrapped into one day.
+        (CastValue::Interval(span), CastTarget::Time(precision)) => {
+            if !span.is_finite() {
+                return Err(CastError::CannotConvertInfiniteIntervalToTime);
+            }
+            let time = PgTime::from_micros(span.microseconds.rem_euclid(USECS_PER_DAY))
+                .expect("a remainder of a day is a time");
+            Ok(CastValue::Time(time.adjust_for_typmod(precision)))
+        }
+        (CastValue::Interval(span), CastTarget::Interval(typmod)) => {
+            interval_value(span.adjust_for_typmod(typmod))
+        }
+        // `time_interval`.
+        (CastValue::Time(time), CastTarget::Interval(typmod)) => {
+            let span = PgInterval {
+                months: 0,
+                days: 0,
+                microseconds: time.micros(),
+            };
+            interval_value(span.adjust_for_typmod(typmod))
+        }
         _ => Err(cannot_cast),
     }
 }
@@ -653,6 +721,7 @@ impl CastValue {
             Self::TimeTz(_) => PgType::TimeTz,
             Self::Jsonb(_) => PgType::Jsonb,
             Self::Uuid(_) => PgType::Uuid,
+            Self::Interval(_) => PgType::Interval,
         }
     }
 }
@@ -688,6 +757,16 @@ fn jsonb_input_error(error: JsonbError) -> CastError {
         JsonbError::Numeric(error) => numeric_input_error(error),
         error => CastError::Jsonb(error),
     }
+}
+
+/// An interval, its refusal as the cast error.
+fn interval_value(span: Result<PgInterval, IntervalError>) -> Result<CastValue, CastError> {
+    span.map(CastValue::Interval).map_err(|error| match error {
+        IntervalError::InvalidSyntax => CastError::InvalidInputSyntax(PgType::Interval),
+        IntervalError::FieldValueOutOfRange => CastError::IntervalFieldValueOutOfRange,
+        IntervalError::OutOfRange => CastError::IntervalOutOfRange,
+        IntervalError::DivisionByZero => unreachable!("no cast divides an interval"),
+    })
 }
 
 /// The lexer's token for a numeric constant.
@@ -766,10 +845,22 @@ fn scan_decinteger(bytes: &[u8]) -> usize {
     }
 }
 
-/// The cast of an unknown literal, the target's input function without a modifier followed by
-/// the length coercion.
+/// The cast of an unknown literal, which reads it as [`cast_text`] does a `text` value, except
+/// that `coerce_type` hands `interval_in` the target's modifier, so the fields of an interval
+/// type pick the unit of a bare number, as in `interval '90' minute`.
 fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
-    // A string constant never holds NUL, which ends a C string.
+    match target {
+        CastTarget::Interval(typmod) if !text.contains('\0') => {
+            interval_value(parse_interval_typmod(text, typmod))
+        }
+        _ => cast_text(text, target),
+    }
+}
+
+/// The I/O coercion of a `text` value, the target's input function without a modifier followed
+/// by the length coercion.
+fn cast_text(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
+    // A string never holds NUL, which ends a C string.
     if text.contains('\0') {
         return Err(CastError::Unsupported);
     }
@@ -803,6 +894,9 @@ fn cast_quoted(text: &str, target: CastTarget) -> Result<CastValue, CastError> {
         CastTarget::Uuid => PgUuid::parse(text)
             .map(CastValue::Uuid)
             .map_err(|UuidError::InvalidInputSyntax| CastError::InvalidInputSyntax(PgType::Uuid)),
+        CastTarget::Interval(typmod) => {
+            interval_value(parse_interval(text).and_then(|span| span.adjust_for_typmod(typmod)))
+        }
     }
 }
 
@@ -967,7 +1061,8 @@ fn datetime_error(error: DateTimeError) -> CastError {
     }
 }
 
-/// Each type's output function under `DateStyle` `ISO` and `TimeZone` `UTC`.
+/// Each type's output function under `DateStyle` `ISO`, `IntervalStyle` `postgres` and
+/// `TimeZone` `UTC`.
 impl fmt::Display for CastValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -985,6 +1080,7 @@ impl fmt::Display for CastValue {
             Self::TimeTz(time) => write!(f, "{time}"),
             Self::Jsonb(value) => write!(f, "{value}"),
             Self::Uuid(value) => write!(f, "{value}"),
+            Self::Interval(span) => write!(f, "{span}"),
         }
     }
 }

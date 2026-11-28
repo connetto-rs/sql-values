@@ -20,14 +20,18 @@ use diesel::{
 };
 use pg18::{connect, pg_nullable_text, pg_order, pg_text, quoted};
 use sql_values::postgres::{
-    CastError, CastTarget, CastValue, CharLength, IntegerType, Literal, NumericTypmod, PgBpchar,
-    PgNumeric, PgType, PgValue, cast_literal, cast_value, number_constant,
+    CastError, CastTarget, CastValue, CharLength, IntegerType, IntervalFields, IntervalTypmod,
+    Literal, NumericTypmod, PgBpchar, PgNumeric, PgType, PgValue, cast_literal, cast_value,
+    number_constant,
 };
 
 /// Every target with the SQL that names it.
 fn targets() -> Vec<(&'static str, CastTarget)> {
     let length = |n| Some(CharLength::new(n).expect("a valid length"));
     let numeric = |p, s| CastTarget::Numeric(Some(NumericTypmod::new(p, s).expect("a typmod")));
+    let interval = |fields, precision| {
+        CastTarget::Interval(IntervalTypmod::new(fields, precision).expect("a typmod"))
+    };
     vec![
         ("boolean", CastTarget::Boolean),
         ("smallint", CastTarget::Smallint),
@@ -62,6 +66,35 @@ fn targets() -> Vec<(&'static str, CastTarget)> {
         ("timetz", CastTarget::TimeTz(None)),
         ("timetz(0)", CastTarget::TimeTz(Some(0))),
         ("timetz(1)", CastTarget::TimeTz(Some(1))),
+        ("interval", interval(None, None)),
+        ("interval(0)", interval(None, Some(0))),
+        ("interval year", interval(Some(IntervalFields::Year), None)),
+        (
+            "interval month",
+            interval(Some(IntervalFields::Month), None),
+        ),
+        ("interval day", interval(Some(IntervalFields::Day), None)),
+        ("interval hour", interval(Some(IntervalFields::Hour), None)),
+        (
+            "interval minute",
+            interval(Some(IntervalFields::Minute), None),
+        ),
+        (
+            "interval second(1)",
+            interval(Some(IntervalFields::Second), Some(1)),
+        ),
+        (
+            "interval year to month",
+            interval(Some(IntervalFields::YearToMonth), None),
+        ),
+        (
+            "interval day to minute",
+            interval(Some(IntervalFields::DayToMinute), None),
+        ),
+        (
+            "interval hour to second(3)",
+            interval(Some(IntervalFields::HourToSecond), Some(3)),
+        ),
         ("jsonb", CastTarget::Jsonb),
         ("uuid", CastTarget::Uuid),
     ]
@@ -355,6 +388,23 @@ const QUOTED: &[&str] = &[
     "a0ee-bc99-9c0b4ef8-bb6d-6bb9-bd38-0a11",
     "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 ",
     "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1",
+    // interval
+    "90 minutes",
+    "-90 minutes",
+    "1.75",
+    "-1.75",
+    "3 4",
+    "1:30.5",
+    "1-2",
+    "1 year 2 mons 3 days 04:05:06.789",
+    "-1 days +23:59:59.999999",
+    "P1Y2M3DT4H5M6.5S",
+    "@ 1 hour ago",
+    "infinity",
+    "-infinity",
+    "178956971 years",
+    "9223372036854775807 usecs",
+    "P1000000000000000D",
 ];
 
 /// Numeric constants of every lexer token and every type `make_const` gives them.
@@ -604,6 +654,21 @@ const VALUES: &[(&str, &str)] = &[
     ("{00000000000000000000000000000000}", "uuid"),
     ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "text"),
     ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "char(4)"),
+    ("1.75", "text"),
+    ("90 minutes", "text"),
+    ("1.75", "char(4)"),
+    ("90 minutes", "interval"),
+    ("-90 minutes", "interval"),
+    ("1 year 2 mons 3 days 04:05:06.789", "interval"),
+    ("-1 days +23:59:59.999999", "interval"),
+    ("26:00:00.05", "interval"),
+    ("-26:00:00", "interval"),
+    ("9223372036854775807 usecs", "interval"),
+    ("-9223372036854775807 usecs", "interval"),
+    ("infinity", "interval"),
+    ("-infinity", "interval"),
+    ("1.75", "interval minute"),
+    ("1:30.55", "interval hour to second(3)"),
 ];
 
 /// Every typed value under every target, skipping the casts the crate declines.
@@ -1012,6 +1077,7 @@ fn pg18_prints_and_converts_every_value() {
         ("2026-01-01 00:00+00", "timestamptz"),
         ("12:00", "time"),
         ("12:00+01", "timetz"),
+        ("90 minutes", "interval"),
     ] {
         let cast = cast_literal(Literal::Quoted(text), target(type_name))
             .unwrap_or_else(|error| panic!("{text:?}::{type_name}: {error}"));

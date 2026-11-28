@@ -779,7 +779,7 @@ fn itmin2interval(itm_in: &ItmIn) -> Result<PgInterval, IntervalError> {
 }
 
 /// `AdjustIntervalForTypmod`, truncating below the last kept field and rounding the seconds.
-fn adjust_interval_for_typmod(
+pub(super) fn adjust_interval_for_typmod(
     interval: &mut PgInterval,
     range: u16,
     precision: Option<u8>,

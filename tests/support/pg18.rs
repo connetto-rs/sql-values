@@ -136,6 +136,7 @@ pub fn pg_error(message: &str, detail: Option<&str>) -> CastError {
         PgType::TimeTz,
         PgType::Jsonb,
         PgType::Uuid,
+        PgType::Interval,
     ];
     let mut errors = vec![
         CastError::MalformedArrayLiteral,
@@ -151,6 +152,9 @@ pub fn pg_error(message: &str, detail: Option<&str>) -> CastError {
         CastError::TimestampOutOfRange,
         CastError::DateOutOfRangeForTimestamp,
         CastError::TimeZoneDisplacementOutOfRange,
+        CastError::IntervalFieldValueOutOfRange,
+        CastError::IntervalOutOfRange,
+        CastError::CannotConvertInfiniteIntervalToTime,
     ];
     let kinds = [
         JsonbKind::Null,

@@ -192,7 +192,7 @@ impl PgValue {
     }
 }
 
-/// Refuses a `char(n)`, a `timestamptz`, a `time` or a `timetz`, returning it.
+/// Refuses a `char(n)`, a `timestamptz`, a `time`, a `timetz` or an `interval`, returning it.
 impl TryFrom<CastValue> for PgValue {
     type Error = CastValue;
 
@@ -211,7 +211,8 @@ impl TryFrom<CastValue> for PgValue {
             CastValue::Bpchar(_)
             | CastValue::TimestampTz(_)
             | CastValue::Time(_)
-            | CastValue::TimeTz(_) => return Err(value),
+            | CastValue::TimeTz(_)
+            | CastValue::Interval(_) => return Err(value),
         })
     }
 }
