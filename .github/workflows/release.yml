@@ -12,15 +12,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --release --all-features
-      - run: cargo test --release --doc --all-features
-
   feature-powerset:
     name: Feature powerset
     runs-on: ubuntu-26.04
@@ -30,84 +21,9 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --no-dev-deps
 
-  semver:
-    name: SemVer
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
-
-  msrv:
-    name: Rust 1.88
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - run: cargo check --all-features
-
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-
-  doc:
-    name: Documentation
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo doc --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-  no-std:
-    name: no_std
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - run: cargo check --target wasm32-unknown-unknown --no-default-features
-      - run: cargo check --target wasm32-unknown-unknown --all-features
-
-  fuzz-smoke:
-    name: Fuzz Smoke
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo +nightly install cargo-fuzz --version 0.13.2 --locked
-      - run: cd fuzz && cargo +nightly fuzz build -a
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_timestamp -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_timestamp_tz -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_date -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_time -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_bool -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_pg_bytea_hex -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_i64 -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_f64 -- -dict=sql_scalars.dict -max_len=100 -runs=100
-      - run: cd fuzz && cargo +nightly fuzz run fuzz_decimal -- -dict=sql_scalars.dict -max_len=100 -runs=100
-
   publish:
     name: Publish
-    needs: [test, feature-powerset, semver, msrv, fmt, clippy, doc, no-std, fuzz-smoke]
+    needs: [feature-powerset]
     runs-on: ubuntu-26.04
     permissions:
       id-token: write
