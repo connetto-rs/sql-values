@@ -534,6 +534,7 @@ fn supported(element: CastTarget) -> Result<(), CastError> {
             | CastTarget::TimestampTz(_)
             | CastTarget::Time(_)
             | CastTarget::TimeTz(_)
+            | CastTarget::Interval(_)
     ) {
         Err(CastError::Unsupported)
     } else {

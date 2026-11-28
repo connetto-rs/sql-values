@@ -13,7 +13,7 @@ use core::{
 pub use arithmetic::{IntervalSum, ShiftError};
 use decode::{
     INTERVAL_FULL_RANGE, RANGE_DAY, RANGE_HOUR, RANGE_MINUTE, RANGE_MONTH, RANGE_SECOND,
-    RANGE_YEAR, interval_in,
+    RANGE_YEAR, adjust_interval_for_typmod, interval_in,
 };
 pub(crate) use decode::{decode_extract_unit, decode_units, strtod};
 
@@ -92,6 +92,35 @@ impl PgInterval {
     pub fn span_microseconds(&self) -> i128 {
         let days = i64::from(self.months) * DAYS_PER_MONTH + i64::from(self.days);
         i128::from(self.microseconds) + i128::from(days) * USECS_PER_DAY
+    }
+
+    /// `interval_scale`, the length coercion of an interval type, which truncates the interval
+    /// below the last field the typmod keeps and rounds its seconds, half away from zero, to the
+    /// typmod's precision. An infinity is kept.
+    ///
+    /// # Errors
+    ///
+    /// [`IntervalError::OutOfRange`] when rounding the seconds leaves the type.
+    ///
+    /// ```
+    /// use sql_values::postgres::{
+    ///     IntervalError, IntervalFields, IntervalTypmod, PgInterval, parse_interval,
+    /// };
+    ///
+    /// let hour = IntervalTypmod::new(Some(IntervalFields::Hour), None).unwrap();
+    /// let span = parse_interval("1 day 01:30:00").unwrap();
+    /// assert_eq!(span.adjust_for_typmod(hour).unwrap().to_string(), "1 day 01:00:00");
+    /// assert_eq!(PgInterval::INFINITY.adjust_for_typmod(hour), Ok(PgInterval::INFINITY));
+    ///
+    /// let whole = IntervalTypmod::new(None, Some(0)).unwrap();
+    /// let span = parse_interval("-00:00:01.5").unwrap();
+    /// assert_eq!(span.adjust_for_typmod(whole).unwrap().to_string(), "-00:00:02");
+    /// let last = PgInterval { months: 0, days: 0, microseconds: i64::MAX - 1 };
+    /// assert_eq!(last.adjust_for_typmod(whole), Err(IntervalError::OutOfRange));
+    /// ```
+    pub fn adjust_for_typmod(mut self, typmod: IntervalTypmod) -> Result<Self, IntervalError> {
+        adjust_interval_for_typmod(&mut self, typmod.range(), typmod.precision)?;
+        Ok(self)
     }
 }
 
