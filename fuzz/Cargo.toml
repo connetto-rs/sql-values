@@ -112,3 +112,10 @@ path = "fuzz_targets/fuzz_jsonb.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_uuid"
+path = "fuzz_targets/fuzz_uuid.rs"
+test = false
+doc = false
+bench = false

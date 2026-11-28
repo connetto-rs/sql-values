@@ -16,17 +16,19 @@ use super::{
     integer::IntegerType,
     jsonb::PgJsonb,
     numeric::PgNumeric,
+    uuid::PgUuid,
 };
 
-/// A known `boolean`, integer, `numeric`, `text`, `date`, `timestamp`, `jsonb` or array value,
-/// equal, ordered and hashed as PostgreSQL's comparison operators compare it.
+/// A known `boolean`, integer, `numeric`, `text`, `date`, `timestamp`, `jsonb`, `uuid` or array
+/// value, equal, ordered and hashed as PostgreSQL's comparison operators compare it.
 ///
 /// An integer of every width and a `numeric` compare by value, as `int48eq`, or `numeric_eq` after
 /// `int8_numeric`, compares them, so `4`, `4::bigint` and `4.00` are one value. A `date` compares
 /// with a `timestamp` as `date_cmp_timestamp` does, equal to its midnight. A `text` compares by
-/// its bytes, as under the `C` collation, and so do the strings in a `jsonb`. PostgreSQL has no
-/// operator between a `boolean`, a number, a `text`, a `date` or `timestamp`, an array and a
-/// `jsonb`, so those are never equal and order in that sequence.
+/// its bytes, as under the `C` collation, and so do the strings in a `jsonb`. A `uuid` compares by
+/// its bytes, as `uuid_cmp` does. PostgreSQL has no operator between a `boolean`, a number, a
+/// `text`, a `date` or `timestamp`, an array, a `jsonb` and a `uuid`, so those are never equal and
+/// order in that sequence.
 ///
 /// Its [`Display`](fmt::Display) prints the type's output function under the default `DateStyle`
 /// of `ISO`, as [`CastValue`]'s does.
@@ -69,6 +71,8 @@ pub enum PgValue {
     Array(PgArray),
     /// A `jsonb`.
     Jsonb(PgJsonb),
+    /// A `uuid`.
+    Uuid(PgUuid),
 }
 
 impl PgValue {
@@ -81,6 +85,7 @@ impl PgValue {
             Self::Date(_) | Self::Timestamp(_) => 3,
             Self::Array(_) => 4,
             Self::Jsonb(_) => 5,
+            Self::Uuid(_) => 6,
         }
     }
 
@@ -111,6 +116,7 @@ impl PgValue {
             Self::Date(date) => CastValue::Date(date),
             Self::Timestamp(at) => CastValue::Timestamp(at),
             Self::Jsonb(value) => CastValue::Jsonb(value),
+            Self::Uuid(value) => CastValue::Uuid(value),
             Self::Array(_) => return Err(CastError::Unsupported),
         })
     }
@@ -201,6 +207,7 @@ impl TryFrom<CastValue> for PgValue {
             CastValue::Date(date) => Self::Date(date),
             CastValue::Timestamp(at) => Self::Timestamp(at),
             CastValue::Jsonb(value) => Self::Jsonb(value),
+            CastValue::Uuid(value) => Self::Uuid(value),
             CastValue::Bpchar(_)
             | CastValue::TimestampTz(_)
             | CastValue::Time(_)
@@ -238,6 +245,7 @@ impl Ord for PgValue {
             (Self::Timestamp(left), Self::Timestamp(right)) => left.cmp(right),
             (Self::Array(left), Self::Array(right)) => left.cmp(right),
             (Self::Jsonb(left), Self::Jsonb(right)) => left.cmp(right),
+            (Self::Uuid(left), Self::Uuid(right)) => left.cmp(right),
             (left, right) => left.family().cmp(&right.family()),
         }
     }
@@ -259,6 +267,7 @@ impl Hash for PgValue {
             Self::Timestamp(at) => at.hash(state),
             Self::Array(array) => array.hash(state),
             Self::Jsonb(value) => value.hash(state),
+            Self::Uuid(value) => value.hash(state),
         }
     }
 }
@@ -274,6 +283,7 @@ impl fmt::Display for PgValue {
             Self::Timestamp(at) => write!(f, "{at}"),
             Self::Array(array) => write!(f, "{array}"),
             Self::Jsonb(value) => write!(f, "{value}"),
+            Self::Uuid(value) => write!(f, "{value}"),
         }
     }
 }

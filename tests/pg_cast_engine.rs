@@ -63,6 +63,7 @@ fn targets() -> Vec<(&'static str, CastTarget)> {
         ("timetz(0)", CastTarget::TimeTz(Some(0))),
         ("timetz(1)", CastTarget::TimeTz(Some(1))),
         ("jsonb", CastTarget::Jsonb),
+        ("uuid", CastTarget::Uuid),
     ]
 }
 
@@ -348,6 +349,12 @@ const QUOTED: &[&str] = &[
     "1e1000000",
     "1e-2000000000",
     "nul",
+    // uuid
+    "A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11",
+    "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}",
+    "a0ee-bc99-9c0b4ef8-bb6d-6bb9-bd38-0a11",
+    "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11 ",
+    "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a1",
 ];
 
 /// Numeric constants of every lexer token and every type `make_const` gives them.
@@ -593,6 +600,10 @@ const VALUES: &[(&str, &str)] = &[
     (r#"{"b": 1, "a": [true, "x\ny"]}"#, "jsonb"),
     (r#" {"a": 1} "#, "text"),
     ("[1,", "text"),
+    ("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11", "uuid"),
+    ("{00000000000000000000000000000000}", "uuid"),
+    ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "text"),
+    ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "char(4)"),
 ];
 
 /// Every typed value under every target, skipping the casts the crate declines.
@@ -900,6 +911,12 @@ const COMPARED: &[(&str, &str)] = &[
     (r#"{"a": 1}"#, "jsonb"),
     (r#"{"a": 1.0}"#, "jsonb"),
     (r#"{"a": 1, "bb": 2}"#, "jsonb"),
+    ("00000000-0000-0000-0000-000000000000", "uuid"),
+    ("00000000-0000-0000-0000-0000000000ff", "uuid"),
+    ("01000000-0000-0000-0000-000000000000", "uuid"),
+    ("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11", "uuid"),
+    ("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "uuid"),
+    ("ffffffff-ffff-ffff-ffff-ffffffffffff", "uuid"),
 ];
 
 /// Every pair of values orders as PostgreSQL's `<` and `=` order it where PostgreSQL has an
